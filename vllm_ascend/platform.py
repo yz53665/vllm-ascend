@@ -266,12 +266,12 @@ class NPUPlatform(Platform):
 
             if cache_config.enable_prefix_caching or \
                 not ascend_scheduler_config.enabled or \
-                getattr(ascend_scheduler_config, "enable_chunked_prefill", False):
-                logger.warning(
-                    "If chunked prefill or prefix caching is enabled, block size must be set to 128."
+                # getattr(ascend_scheduler_config, "enable_chunked_prefill", False):
+                # logger.warning(
+                #     "If chunked prefill or prefix caching is enabled, block size must be set to 128."
                 )
                 origin_block_size = cache_config.block_size
-                cache_config.block_size = 128
+                # cache_config.block_size = 128
                 # TODO(MengqingCao): Remove the model_type check, after resolving the hidden error in get_kv_cache_groups.
                 if model_config and model_config.hf_config.model_type == "qwen3_next":
                     logger.warning(

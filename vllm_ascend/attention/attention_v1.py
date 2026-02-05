@@ -17,7 +17,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, List, Optional, Tuple, Type
+from typing import ClassVar, List, Optional, Tuple, Type, Dict, Any
 
 import torch
 import torch.nn as nn
@@ -167,6 +167,8 @@ class AscendMetadata:
 
     # *************************** Other Properties *************************** #
     enable_dbo_across_dp: bool = False
+
+    additional_metadata: Optional[Dict[str, Any]]
 
 
 class AscendAttentionMetadataBuilder:
@@ -347,15 +349,31 @@ class AscendAttentionBackendImpl(AttentionImpl):
             mask = torch_npu.npu_format_cast(mask.contiguous(),
                                              ACL_FORMAT_FRACTAL_NZ)
 
-        torch_npu._npu_flash_attention(query=query,
-                                       key=key,
-                                       value=value,
-                                       mask=mask,
-                                       seq_len=attn_metadata.seq_lens,
-                                       scale_value=self.scale,
-                                       num_heads=self.num_heads,
-                                       num_kv_heads=self.num_kv_heads,
-                                       out=output)
+        if attn_metadata.additional_metadata is not None:
+            output = torch.ops.mxrec.hstu_jagged(
+                q=query,
+                k=key,
+                v=value,
+                mask=None,
+                attn_bias=None,
+                mask_type=0,
+                max_seq_len=attn_metadata.max_query_len,
+                silu_scale=1.0 / (self.hidden_size * 100),
+                seq_offset=attn_metadata.query_start_loc,
+                num_context=None,
+                num_target=attn_metadata.additional_metadata["num_candidates"],
+                target_group_size=1,
+                ).view(-1, self.num_heads, self.head_size)
+        else:
+            torch_npu._npu_flash_attention(query=query,
+                                        key=key,
+                                        value=value,
+                                        mask=mask,
+                                        seq_len=attn_metadata.seq_lens,
+                                        scale_value=self.scale,
+                                        num_heads=self.num_heads,
+                                        num_kv_heads=self.num_kv_heads,
+                                        out=output)
         assert output is not None
         return output[:num_tokens, :, :]
 
@@ -427,6 +445,31 @@ class AscendAttentionBackendImpl(AttentionImpl):
             graph_params = get_graph_params()
             forward_context: ForwardContext = get_forward_context()
             num_tokens = query.shape[0]
+            if attn_metadata.additional_metadata is not None:
+                block_size = self.key_cache.shape[1]
+                output = torch.ops.mxrec.hstu_paged(
+                    q=query,
+                    k=key,
+                    v=value,
+                    k_cache=self.key_cache.view(self.key_cache.shape[0], block_size, self.num_kv_heads, self.head_size),
+                    v_cache=self.value_cache.view(self.value_cache.shape[0], block_size, self.num_kv_heads, self.head_size),
+                    mask=None,
+                    attn_bias=None,
+                    mask_type=2,
+                    max_seq_len=attn_metadata.max_query_len,
+                    max_seq_len_k=attn_metadata.additional_metadata["max_seq_len_k"],
+                    target_group_size=1,
+                    silu_scale=1.0 / (self.hidden_size * 100),
+                    seq_offset=attn_metadata.query_start_loc,
+                    seq_offset_k=attn_metadata.additional_metadata["seq_offset_k"],
+                    seq_offset_t=attn_metadata.query_start_loc,
+                    page_offsets=attn_metadata.additional_metadata["page_offsets"],
+                    page_ids=attn_metadata.additional_metadata["page_ids"],
+                    last_page_len=attn_metadata.additional_metadata["last_page_len"],
+                    num_target=attn_metadata.query_lens,
+                )
+                return output
+
             if forward_context.capturing:
                 # Get workspace from cache or calculate it if not present.
                 workspace = graph_params.workspaces.get(num_tokens)
@@ -620,16 +663,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
             # TODO: Remove this contiguous in the future.
             value = value.contiguous()
 
-            if len(kv_cache) > 1:
-                if self.key_cache is None:
-                    self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
+            if self.key_cache is None:
+                self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
+            if len(kv_cache) > 1 and attn_metadata.attn_state != \
+               AscendAttentionState.DecodeOnly:
                 slots = attn_metadata.slot_mapping
                 torch_npu._npu_reshape_and_cache(
                     key=key[:num_actual_tokens],
                     value=value[:num_actual_tokens],
                     key_cache=self.key_cache,
                     value_cache=self.value_cache,
-                    slot_indices=slots)
+                    slot_indices=slots[:key[:num_actual_tokens].shape[0]])
             if attn_type == AttentionType.ENCODER_ONLY:
                 cum_seq_len = attn_metadata.query_start_loc[1:].tolist()
                 attn_out = torch_npu.npu_fusion_attention(
@@ -656,8 +700,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 output = self._forward_prefill_cache_hit(
                     query, attn_metadata, output)
             elif attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
-                output = self._forward_decode_only(query, attn_metadata,
-                                                   output)
+                output = self._forward_decode_only(query, attn_metadata, key,
+                                                   value, output)
             # Normal V1 situation.
             else:
                 # npu_fused_infer_attention_score does not support cases
@@ -696,7 +740,7 @@ def unified_ascend_attention_with_output(
                       attn_metadata,
                       output,
                       trace_flag=False)
-    maybe_save_kv_layer_to_connector(layer_name, kv_cache)
+    # maybe_save_kv_layer_to_connector(layer_name, kv_cache)
     return
 
 

@@ -440,12 +440,12 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                                             pin_memory=True)
         self.slot_mapping_np = self.slot_mapping_cpu.numpy()
         self.query_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
-                                               dtype=torch.int32,
+                                               dtype=torch.int64,
                                                device="cpu",
                                                pin_memory=True)
         self.query_start_loc_np = self.query_start_loc_cpu.numpy()
         self.seq_lens_cpu = torch.zeros(self.max_num_reqs,
-                                        dtype=torch.int32,
+                                        dtype=torch.int64,
                                         device="cpu",
                                         pin_memory=True)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
@@ -1452,7 +1452,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                 # create a dummy block table and slot mapping for them.
                 blk_table_tensor = torch.zeros(
                     (num_reqs, 1),
-                    dtype=torch.int32,
+                    dtype=torch.int64,
                     device=self.device,
                 )
                 slot_mapping = torch.zeros(
@@ -1885,6 +1885,109 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         return moe_comm_type
 
     @torch.inference_mode()
+    def deal_metadata(
+        self,
+        attn_metadata,
+        input_ids,
+        positions,
+        scheduler_output,
+        is_dummy = False,
+    ):
+        if attn_metadata is None:
+            logger.warning(" - deal_metadata metadata is None")
+        else:
+            is_merged_table = self.vllm_config.model_config.hf_config.merged_table if self.vllm_config.model_config.hf_config.merged_table is not None else True
+            if not is_merged_table:
+                batch_lens_no_merged = []
+            first_metadata = next(iter(attn_metadata.values()))
+            if not is_dummy:
+                reqs = scheduler_output.scheduled_new_reqs
+                cached_reqs = scheduler_output.scheduled_cached_reqs
+                logger.info(f"reqs:{len(reqs)}")
+                logger.info(f"cached_reqs:{cached_reqs}")
+                uids = []
+                candidate_nums = []
+                if reqs:
+                    request_stage = reqs[0].additional_information["request_stage"]
+                    uid = reqs[0].additional_information["uid"][0]
+                    for req in reqs:
+                        uids += req.additional_information["uid"]
+                        candidate_nums += req.additional_information["candidate_num"]
+                elif cached_reqs:
+                    request_stage = cached_reqs.additional_information[0]["request_stage"]
+                    uid = cached_reqs.additional_information[0]["uid"][0]
+
+                if cached_reqs:    
+                    for info in cached_reqs.additional_information:
+                        uids += info["uid"]
+                        candidate_nums += info["candidate_num"]
+                if request_stage != 1:
+                    num_candidates = torch.tensor(candidate_nums, dtype=torch.int64, device=self.device)
+            else:
+                request_stage = 1
+                uid = 0
+                uids = []
+
+            if (not is_dummy) and first_metadata.attn_state == AscendAttentionState.ChunkedPrefill:
+                    num_reqs = self.input_batch.num_reqs
+                    first_metadata.query_lens = first_metadata.query_lens[:num_reqs]
+                    first_metadata.seq_lens = first_metadata.seq_lens[:num_reqs]
+                    first_metadata.seq_lens_list = first_metadata.seq_lens_list[:num_reqs]
+                    first_metadata.slot_mapping = first_metadata.slot_mapping[:first_metadata.num_actual_tokens]
+
+            seq_lens = first_metadata.seq_lens
+            batch_lens = first_metadata.query_lens
+            batch_size = seq_lens.shape[0]
+
+            # decode璁＄畻绠楀瓙鍏ュ弬
+            if request_stage == 1:
+                seq_lens = seq_lens.npu()
+                batch_lens = batch_lens.npu()
+                block_table = first_metadata.block_tables
+                deal_seq_lens = seq_lens - batch_lens
+                num_blocks_per_seq = torch.ceil(deal_seq_lens / self.block_size).to(torch.int64) # 鍚戜笂鍙栨暣
+
+                # page_offsets 灏辨槸 num_blocks_per_seq 鐨勫墠缂€鍜?
+                page_offsets = torch.zeros(batch_size + 1, dtype=torch.int64, device=block_table.device)
+                torch.cumsum(num_blocks_per_seq, dim=0, out=page_offsets[1:])
+
+                last_page_len_tensor = (deal_seq_lens - 1) % self.block_size + 1
+
+                seq_offset_k = torch.zeros(seq_lens.shape[0] + 1, dtype=torch.int64, device=block_table.device)
+                torch.cumsum(seq_lens, dim=0, out=seq_offset_k[1:]) # 璁＄畻鍑烘瘡涓姹傜殑鍓嶇紑鍜?
+
+                max_seq_len_k = max(first_metadata.seq_lens_list) - 1 if is_dummy else max(first_metadata.seq_lens_list)
+
+                current_block_tables = block_table[:batch_size]
+
+                page_ids_list = []
+                for i in range(batch_size):
+                    num_blocks_for_req = page_offsets[i + 1] - page_offsets[i]
+                    valid_blocks = current_block_tables[i, :num_blocks_for_req]
+                    page_ids_list.append(valid_blocks)
+
+                page_ids = torch.cat(page_ids_list).to(torch.int64)
+                first_metadata.query_lens = first_metadata.query_lens.npu()
+
+            first_metadata.additional_metadata = {}
+            first_metadata.additional_metadata["uid"] = uid
+            first_metadata.additional_metadata["uids"] = uids
+            if request_stage == 1:
+                first_metadata.attn_state = AscendAttentionState.DecodeOnly
+                first_metadata.additional_metadata["max_seq_len_k"] = max_seq_len_k if not is_dummy else max_seq_len_k + 1
+                first_metadata.additional_metadata["seq_offset_k"] = seq_offset_k
+                first_metadata.additional_metadata["page_offsets"] = page_offsets
+                first_metadata.additional_metadata["page_ids"] = page_ids
+                first_metadata.additional_metadata["last_page_len"] = last_page_len_tensor
+                first_metadata.additional_metadata["decode_table_offset"] = [block_table[i][0].item() for i in range(batch_size)]
+            else:
+                first_metadata.attn_state = AscendAttentionState.PrefillNoCache
+                first_metadata.additional_metadata["num_candidates"] = num_candidates
+                first_metadata.additional_metadata["is_pd_merge"] = request_stage == 2
+
+        return attn_metadata, input_ids, positions
+
+    @torch.inference_mode()
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
@@ -1924,6 +2027,11 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                                            uniform_decode=uniform_decode)
         aclgraph_runtime_mode, batch_descriptor = \
             self.aclgraph_dispatcher.dispatch(batch_descriptor)
+
+        if self.model_config.hf_config.model_type == "hstu_inference_ranking":
+            from torch.autograd.profiler import record_function
+            with record_function("## deal_metadata ##"):
+                attn_metadata, input_ids, positions = self.deal_metadata(attn_metadata, input_ids, positions, scheduler_output)
 
         # Run forward pass
         with ProfileExecuteDuration().capture_async("forward"):
@@ -2071,10 +2179,41 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                 if logprobs_tensors is not None else None
 
             # Compute prompt logprobs if needed.
-            prompt_logprobs_dict = self._get_prompt_logprobs_dict(
-                hidden_states[:scheduler_output.total_num_scheduled_tokens],
-                scheduler_output,
-            )
+            if self.model_config.hf_config.model_type == "hstu_inference_ranking":
+                prompt_logprobs_dict = {}
+                first_metadata = next(iter(attn_metadata.values()))
+                if len(scheduler_output.scheduled_new_reqs) > 0 and scheduler_output.scheduled_new_reqs[0].sampling_params.prompt_logprobs and hidden_states is not None:
+                    if first_metadata.attn_state == AscendAttentionState.DecodeOnly:
+                        num_prompt_logprobs_dict = self.input_batch.num_prompt_logprobs
+                        index = 0
+                        query_start_loc = first_metadata.query_start_loc
+                        for req_id, _ in num_prompt_logprobs_dict.items():
+                            hidden_states_req = hidden_states[query_start_loc[index] : query_start_loc[index + 1]].cpu()
+                            prompt_logprobs_dict[req_id] = LogprobsTensors(
+                                logprob_token_ids=hidden_states_req,
+                                logprobs=hidden_states_req,
+                                selected_token_ranks=positions[query_start_loc[index] : query_start_loc[index + 1]].cpu()
+                            )
+                            index = index + 1
+                    elif first_metadata.additional_metadata is not None and first_metadata.additional_metadata.get("is_pd_merge", False):
+                        num_prompt_logprobs_dict = self.input_batch.num_prompt_logprobs
+                        start_index = 0
+                        index = 0
+                        num_candidates = first_metadata.additional_metadata["num_candidates"]
+                        for req_id, _ in num_prompt_logprobs_dict.items():
+                            hidden_states_req = hidden_states[start_index : start_index + num_candidates[index]].cpu()
+                            prompt_logprobs_dict[req_id] = LogprobsTensors(
+                                logprob_token_ids=hidden_states_req,
+                                logprobs=hidden_states_req,
+                                selected_token_ranks=positions[start_index : start_index + num_candidates[index]].cpu()
+                            )
+                            start_index += num_candidates[index]
+                            index = index + 1
+            else:
+                prompt_logprobs_dict = self._get_prompt_logprobs_dict(
+                    hidden_states[:scheduler_output.total_num_scheduled_tokens],
+                    scheduler_output,
+                )
 
             num_sampled_tokens = sampler_output.sampled_token_ids.shape[0]
             sampled_token_ids = sampler_output.sampled_token_ids
@@ -2274,7 +2413,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                     query_start_loc=torch.tensor(
                         [0] + self.actual_seq_lengths_q[:num_reqs],
                         device=self.device,
-                        dtype=torch.int32),
+                        dtype=torch.int64),
                     query_start_loc_cpu=self.query_start_loc_cpu[:num_reqs +
                                                                  1],
                     seq_lens_cpu=self.seq_lens_cpu,
@@ -2475,6 +2614,8 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                 def dummy_compute_logits(hidden_states):
                     return self.model.compute_logits(
                         hidden_states[dummy_indices])
+
+            attn_metadata, input_ids, positions = self.deal_metadata(attn_metadata, input_ids, positions, None, True)
 
             with set_ascend_forward_context(
                     attn_metadata,
@@ -3444,6 +3585,14 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         assert aclgraph_runtime_mode != CUDAGraphMode.NONE and \
             aclgraph_runtime_mode in [CUDAGraphMode.FULL,
                                       CUDAGraphMode.PIECEWISE]
+
+        if self.model_config.hf_config.model_type == "hstu_inference_ranking":
+            logger.info("HSTU model _capture_aclgraphs")
+            self._dummy_run(self.scheduler_config.max_num_batched_tokens,
+                            aclgraph_runtime_mode=CUDAGraphMode.NONE,
+                            force_attention=True,
+                            uniform_decode=uniform_decode)
+            return
 
         # Only rank 0 should print progress bar during capture
         if is_global_first_rank():

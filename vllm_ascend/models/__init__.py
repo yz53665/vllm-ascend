@@ -1,6 +1,8 @@
 from vllm import ModelRegistry
+from vllm.transformers_utils.config import _CONFIG_REGISTRY
 
 import vllm_ascend.envs as envs_ascend
+import vllm.transformers_utils.configs as configs
 
 
 def register_model():
@@ -46,3 +48,7 @@ def register_model():
     ModelRegistry.register_model(
         "Qwen3NextForCausalLM",
         "vllm_ascend.models.qwen3_next:CustomQwen3NextForCausalLM")
+    _CONFIG_REGISTRY["hstu_inference_ranking"] = "HSTUInferenceRankingConfig"
+    ModelRegistry.register_model(
+        "HSTUInferenceForCausalLM",
+        "vllm_ascend.models.hstu.hstu:HSTUInferenceForCausalLM")

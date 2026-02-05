@@ -68,8 +68,9 @@ class AttentionMaskBuilder:
     def get_attn_mask(self, max_seq_len: int, dtype: torch.dtype,
                       device: torch.device):
         self._update_attn_cache(max_seq_len, dtype)
-        return self.attn_mask_cache[:max_seq_len, :max_seq_len].contiguous(
-        ).to(device, non_blocking=True)
+        # return self.attn_mask_cache[:max_seq_len, :max_seq_len].contiguous(
+        # ).to(device, non_blocking=True)
+        return None
 
     def get_pooling_mask(self, device):
         if self.pooling_mask is None:
