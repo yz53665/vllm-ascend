@@ -168,7 +168,7 @@ class AscendMetadata:
     # *************************** Other Properties *************************** #
     enable_dbo_across_dp: bool = False
 
-    additional_metadata: Optional[Dict[str, Any]]
+    additional_metadata: Optional[Dict[str, Any]] = None
 
 
 class AscendAttentionMetadataBuilder:
@@ -334,7 +334,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         num_tokens=0,
     ) -> torch.Tensor:
         assert attn_metadata is not None
-        assert attn_metadata.attn_mask is not None
+        # assert attn_metadata.attn_mask is not None
 
         mask = attn_metadata.attn_mask
 
@@ -408,6 +408,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self,
         query: torch.Tensor,
         attn_metadata: AscendMetadata,
+        key: Optional[torch.Tensor] = None,
+        value: Optional[torch.Tensor] = None,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if is_310p():

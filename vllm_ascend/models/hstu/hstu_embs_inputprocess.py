@@ -4,9 +4,7 @@ import torch_npu
 
 from typing import Optional, Union
 from vllm.config import VllmConfig
-from vllm_ascend.models.hstu.hstu_config import (
-    HSTUInferenceRankingConfig
-)
+from vllm.transformers_utils.configs.hstu_config import HSTUInferenceRankingConfig
 
 
 @torch.no_grad()

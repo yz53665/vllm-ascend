@@ -19,7 +19,6 @@ from vllm_ascend.distributed.mooncake_user.user_kv_transfer import (
 from vllm_ascend.distributed.mooncake_user.backend import backend_map, MooncakeBackend
 
 from vllm.transformers_utils.configs.hstu_config import (
-    HSTUInferenceRankingConfig,
     InferenceHSTUConfig, RankingConfig
 )
 
