@@ -69,6 +69,7 @@ class MooncakeBackend(Backend):
         self._use_fabric_mem = os.getenv("ASCEND_ENABLE_USE_FABRIC_MEM", "0") == "1"
         self._lazy_init = lazy_init and self._use_fabric_mem
         self._store_initialized = False
+        self.is_register_nds_buffer = False
         self._store_init_lock = threading.Lock()
 
         if not self._lazy_init:
@@ -166,6 +167,13 @@ class MooncakeBackend(Backend):
             local_hostname = get_ip()
             global_te.get_transfer_engine(local_hostname, device_name=None)
             global_te.register_buffer(ptrs, lengths)
+            if self.is_register_nds_buffer:
+                return
+            for ptr, size in zip(ptrs, lengths):
+                ret_value = self.store.register_nds_buffer(ptr, size)
+                if ret_value != 0:
+                    raise RuntimeError("Mooncake memory registration failed.")
+            self.is_register_nds_buffer = True
 
     def exists(self, keys: list[str]) -> list[int]:
         if self._lazy_init and not self._store_initialized:
