@@ -39,6 +39,7 @@ When `MultiConnector` is used, configure `kv_load_failure_policy` on the `MultiC
 | `consumer_is_to_put` | Whether Decode node put KV Cache into KV Pool. The default value is false. |
 | `consumer_is_to_load` | Whether Decode node load KV cache from KV Pool. The default value is false. |
 | `use_layerwise` | Enable layer-by-layer KV save/load. Only supported on the Prefill node and requires the `memcache` backend. The default value is false. |
+| `block_aggregation` | Number of consecutive full blocks aggregated into one store object (one key, one blob) before transfer, reducing small-block overhead. The default value is 1 (disabled). Requires the `mooncake` backend and is not supported with `use_layerwise`, TP mismatch, MLA (`put_step > 1`), or KV cache events. |
 | `prefill_pp_size` | Prefill PP size, needs to be set when Prefill node enables PP. |
 | `prefill_pp_layer_partition` | Prefill PP layer partition, needs to be set when Prefill node enables PP. |
 

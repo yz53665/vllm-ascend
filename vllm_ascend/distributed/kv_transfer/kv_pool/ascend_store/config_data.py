@@ -260,9 +260,14 @@ class ChunkedTokenDatabase:
         partitions: list[int] | None,
         use_hybrid: bool = False,
         hash_block_size: int | None = None,
+        block_aggregation: int = 1,
     ):
         self.metadata = metadata
         self.block_size = block_size
+        # Number of consecutive full blocks aggregated into one transfer
+        # unit / store key. 1 disables aggregation (legacy per-block path).
+        assert block_aggregation >= 1, "block_aggregation must be >= 1"
+        self.block_aggregation = block_aggregation
         self.group_kv_caches_base_addr: dict[int, list[int]] = {}
         self.group_block_len: dict[int, list[int]] = {}
         self.group_block_stride: dict[int, list[int]] = {}
@@ -595,6 +600,166 @@ class ChunkedTokenDatabase:
         ):
             assert block_id is not None
             yield start, end, prefix + block_hash_to_str(hash_val), hash_val, block_id
+
+    @staticmethod
+    def _make_agg_hash(last_member_hash: BlockHash | str, count: int) -> str:
+        """Content-addressable chunk hash for an aggregated group of blocks.
+
+        Block hashes form a chain (each block hash incorporates the previous
+        one), so the LAST member's hash together with the member count uniquely
+        identifies the whole aggregate. The ``agg:`` prefix keeps aggregated
+        keys in a separate namespace from ordinary per-block keys (whose chunk
+        hash is a plain hex digest).
+        """
+        return f"agg:{count}:{block_hash_to_str(last_member_hash)}"
+
+    def _iter_agg_token_chunks(
+        self,
+        token_len: int,
+        block_hashes: BlockHashList | list[str],
+        mask_num: int = 0,
+        kv_cache_group_id: int = 0,
+        cache_role: str = "kv",
+        cache_family: str | None = None,
+        block_ids: list[int] | None = None,
+        skip_null_blocks: bool = False,
+        chunk_filter: Callable[[int], bool] | None = None,
+        shard_rank: int | None = None,
+        shard_size: int | None = None,
+    ) -> Iterable[tuple[int, int, BlockHash | str, list[tuple[int, int, int | None]]]]:
+        """Aggregation-aware chunk iterator.
+
+        Yields ``(group_start, group_end, hash, members)`` where ``members`` is
+        a list of ``(start, end, block_id)``.
+
+        - With ``block_aggregation > 1``, every aligned group of
+          ``block_aggregation`` consecutive FULL blocks is merged into a single
+          tuple (one aggregate key); ``hash`` is the LAST member's hash so the
+          caller can derive a content-addressable aggregate key.
+        - Partial groups (a member was filtered out, or the tail contains a
+          partial block) fall back to one tuple per block with a single member,
+          preserving the legacy per-block key path.
+        - Alignment is by ABSOLUTE chunk index (``chunk_id // block_aggregation``)
+          so save / lookup / load always group identically regardless of the
+          queried token range.
+        """
+        base = self._iter_token_chunks(
+            token_len,
+            block_hashes,
+            mask_num,
+            kv_cache_group_id,
+            cache_role,
+            cache_family,
+            block_ids,
+            skip_null_blocks,
+            chunk_filter,
+            shard_rank,
+            shard_size,
+        )
+        agg = self.block_aggregation
+        if agg <= 1:
+            for start, end, hash_val, block_id in base:
+                yield start, end, hash_val, [(start, end, block_id)]
+            return
+        if cache_family is None:
+            cache_family = self.group_cache_families.get(cache_role, {}).get(kv_cache_group_id, "default")
+        # `_iter_token_chunks` yields start/end in ORIGINAL (uncompressed)
+        # token coordinates: start == chunk_id * base_block_size and a full
+        # block satisfies end - start == base_block_size. Both the absolute
+        # chunk index and the full-block check MUST be derived from
+        # base_block_size, NOT effective_block_size (= base * family_ratio),
+        # which would silently break aggregation for compressed families.
+        base_block_size = self.get_block_size(kv_cache_group_id)
+
+        # pending: list of (chunk_id, start, end, hash, block_id)
+        pending: list[tuple[int, int, int, BlockHash | str, int | None]] = []
+        pending_group: int | None = None
+
+        def flush_per_block():
+            for _, s, e, h, b in pending:
+                yield s, e, h, [(s, e, b)]
+
+        for start, end, hash_val, block_id in base:
+            chunk_id = start // base_block_size
+            group = chunk_id // agg
+            if pending and (group != pending_group or chunk_id != pending[-1][0] + 1):
+                yield from flush_per_block()
+                pending = []
+                pending_group = None
+            # A partial tail block cannot be part of an aggregate.
+            if end - start != base_block_size:
+                yield start, end, hash_val, [(start, end, block_id)]
+                continue
+            pending.append((chunk_id, start, end, hash_val, block_id))
+            pending_group = group
+            if len(pending) == agg:
+                members = [(s, e, b) for _, s, e, _, b in pending]
+                yield pending[0][1], pending[-1][2], pending[-1][3], members
+                pending = []
+                pending_group = None
+        yield from flush_per_block()
+
+    def process_agg_token_key_strings_with_block_ids(
+        self,
+        token_len: int,
+        block_hashes: BlockHashList | list[str],
+        block_ids: list[int],
+        mask_num: int = 0,
+        kv_cache_group_id: int = 0,
+        skip_null_blocks: bool = False,
+        chunk_filter: Callable[[int], bool] | None = None,
+        shard_rank: int | None = None,
+        shard_size: int | None = None,
+    ) -> Iterable[tuple[int, int, str, list[tuple[int, int, int]]]]:
+        """Aggregation-aware variant of ``process_token_key_strings_with_block_ids``.
+
+        Yields ``(group_start, group_end, key_string, members)``. Aggregated
+        groups yield one key with ``len(members) == block_aggregation``; partial
+        groups yield one key per block with a single member.
+        """
+        prefix = self._get_key_prefix(kv_cache_group_id)
+        for start, end, hash_val, members in self._iter_agg_token_chunks(
+            token_len,
+            block_hashes,
+            mask_num,
+            kv_cache_group_id,
+            block_ids=block_ids,
+            skip_null_blocks=skip_null_blocks,
+            chunk_filter=chunk_filter,
+            shard_rank=shard_rank,
+            shard_size=shard_size,
+        ):
+            if len(members) > 1:
+                key = prefix + self._make_agg_hash(hash_val, len(members))
+            else:
+                key = prefix + block_hash_to_str(hash_val)
+            yield start, end, key, members
+
+    def process_agg_token_key_strings(
+        self,
+        token_len: int,
+        block_hashes: BlockHashList | list[str],
+        mask_num: int = 0,
+        kv_cache_group_id: int = 0,
+        chunk_filter: Callable[[int], bool] | None = None,
+    ) -> Iterable[tuple[int, int, str]]:
+        """Aggregation-aware variant of ``process_token_key_strings`` (lookup path).
+
+        Yields ``(group_start, group_end, key_string)`` per aggregate / block.
+        """
+        prefix = self._get_key_prefix(kv_cache_group_id)
+        for start, end, hash_val, members in self._iter_agg_token_chunks(
+            token_len,
+            block_hashes,
+            mask_num,
+            kv_cache_group_id,
+            chunk_filter=chunk_filter,
+        ):
+            if len(members) > 1:
+                key = prefix + self._make_agg_hash(hash_val, len(members))
+            else:
+                key = prefix + block_hash_to_str(hash_val)
+            yield start, end, key
 
     def decode_adaptor_prefill_pp(self, key, addr, size, kv_cache_group_id: int = 0, cache_role: str = "kv"):
         if self.partitions is None or len(self.partitions) == 1:

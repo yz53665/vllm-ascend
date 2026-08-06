@@ -296,6 +296,162 @@ class TestChunkedTokenDatabase(unittest.TestCase):
         self.assertIn("@pp_rank:1", new_keys[1])
 
 
+class TestBlockAggregation(unittest.TestCase):
+    def setUp(self):
+        self.meta = KeyMetadata("llama", 0, 0, 0, 0)
+        self.block_size = 16
+        self.db = ChunkedTokenDatabase(
+            [self.meta], block_size=[self.block_size], partitions=None, block_aggregation=4
+        )
+        self.db.set_group_buffers({0: [1000, 2000]}, {0: [160, 320]}, group_num_layers={0: 1})
+
+    def test_full_aligned_groups_produce_aggregate_keys(self):
+        hashes = [f"h{i}" for i in range(8)]
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                8 * self.block_size, hashes, [10, 11, 12, 13, 14, 15, 16, 17]
+            )
+        )
+        # 8 blocks with block_aggregation=4 -> two aggregated groups.
+        self.assertEqual(len(result), 2)
+        for start, end, key, members in result:
+            self.assertEqual(len(members), 4)
+            self.assertIn("agg:4:", key)
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[0][1], 4 * self.block_size)
+        self.assertEqual(result[1][0], 4 * self.block_size)
+        self.assertEqual(result[1][1], 8 * self.block_size)
+        # Members are in chunk order with the expected block ids.
+        self.assertEqual([m[2] for m in result[0][3]], [10, 11, 12, 13])
+        self.assertEqual([m[2] for m in result[1][3]], [14, 15, 16, 17])
+
+    def test_agg_key_derived_from_last_member_hash(self):
+        hashes = ["h0", "h1", "h2", "h3"]
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                4 * self.block_size, hashes, [10, 11, 12, 13]
+            )
+        )
+        self.assertEqual(len(result), 1)
+        key = result[0][2]
+        self.assertTrue(key.endswith("agg:4:h3"), key)
+
+    def test_same_content_same_key_content_addressable(self):
+        hashes = ["h0", "h1", "h2", "h3"]
+        r1 = list(
+            self.db.process_agg_token_key_strings_with_block_ids(64, hashes, [10, 11, 12, 13])
+        )
+        r2 = list(
+            self.db.process_agg_token_key_strings_with_block_ids(64, hashes, [20, 21, 22, 23])
+        )
+        self.assertEqual(r1[0][2], r2[0][2])
+
+    def test_partial_group_falls_back_to_per_block(self):
+        # 3 blocks with block_aggregation=4: group [0..3) incomplete -> per-block.
+        hashes = ["h0", "h1", "h2"]
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                3 * self.block_size, hashes, [10, 11, 12]
+            )
+        )
+        self.assertEqual(len(result), 3)
+        for start, end, key, members in result:
+            self.assertEqual(len(members), 1)
+            self.assertNotIn("agg:", key)
+
+    def test_filtered_member_breaks_group_into_per_block(self):
+        hashes = ["h0", "h1", "h2", "h3", "h4", "h5", "h6", "h7"]
+        # Skip block index 1 -> group [0..3) incomplete -> all its members per-block.
+        def chunk_filter(start):
+            return (start // self.block_size) != 1
+
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                8 * self.block_size,
+                hashes,
+                [10, 11, 12, 13, 14, 15, 16, 17],
+                chunk_filter=chunk_filter,
+            )
+        )
+        # group [0..3): h0, h2, h3 per-block; group [4..7): aggregated.
+        agg_keys = [key for _, _, key, _ in result if "agg:" in key]
+        per_block = [key for _, _, key, _ in result if "agg:" not in key]
+        self.assertEqual(len(agg_keys), 1)
+        self.assertEqual(len(per_block), 3)
+        # Remaining full group is still aggregated from its first member hash.
+        self.assertTrue(agg_keys[0].endswith("agg:4:h7"), agg_keys[0])
+
+    def test_mask_num_skips_break_aggregation(self):
+        hashes = ["h0", "h1", "h2", "h3"]
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                4 * self.block_size, hashes, [10, 11, 12, 13], mask_num=self.block_size
+            )
+        )
+        # block 0 skipped (start < mask_num): remaining group is partial -> per-block.
+        self.assertEqual(len(result), 3)
+        for _, _, key, members in result:
+            self.assertEqual(len(members), 1)
+            self.assertNotIn("agg:", key)
+
+    def test_partial_tail_block_breaks_aggregation(self):
+        hashes = ["h0", "h1", "h2", "h3"]
+        # token_len = 3.5 blocks: last chunk is partial -> whole group per-block.
+        result = list(
+            self.db.process_agg_token_key_strings_with_block_ids(
+                3 * self.block_size + self.block_size // 2, hashes, [10, 11, 12, 13]
+            )
+        )
+        for _, _, key, members in result:
+            self.assertEqual(len(members), 1)
+            self.assertNotIn("agg:", key)
+
+    def test_lookup_keys_aggregate_ends(self):
+        hashes = ["h0", "h1", "h2", "h3", "h4", "h5", "h6", "h7"]
+        result = list(self.db.process_agg_token_key_strings(8 * self.block_size, hashes))
+        self.assertEqual(len(result), 2)
+        for start, end, key in result:
+            self.assertIn("agg:4:", key)
+            self.assertEqual(end - start, 4 * self.block_size)
+
+    def test_agg_disabled_keeps_per_block_semantics(self):
+        db = ChunkedTokenDatabase([self.meta], block_size=[self.block_size], partitions=None, block_aggregation=1)
+        db.set_group_buffers({0: [1000, 2000]}, {0: [160, 320]}, group_num_layers={0: 1})
+        result = list(db.process_agg_token_key_strings_with_block_ids(64, ["h0", "h1", "h2", "h3"], [10, 11, 12, 13]))
+        self.assertEqual(len(result), 4)
+        for _, _, key, members in result:
+            self.assertEqual(len(members), 1)
+            self.assertNotIn("agg:", key)
+
+    def test_compressed_family_grouping_uses_base_block_size(self):
+        # cache family c2 (ratio=2): logical chunk covers 2 hash blocks, but
+        # start/end are ORIGINAL token coordinates, so chunk_id and the
+        # full-block check must use base_block_size (16), not effective (32).
+        db = ChunkedTokenDatabase(
+            [self.meta], block_size=[self.block_size], partitions=None, block_aggregation=2
+        )
+        db.set_group_buffers(
+            {0: [1000, 2000]},
+            {0: [160, 320]},
+            group_cache_families={0: "c2"},
+            group_num_layers={0: 1},
+        )
+        hashes = ["h0", "h1", "h2", "h3"]
+        result = list(
+            db.process_agg_token_key_strings_with_block_ids(
+                4 * self.block_size, hashes, [10, 11, 12, 13]
+            )
+        )
+        # 2 logical chunks (each = 2 hash blocks) aggregated into 1 group.
+        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result[0][3]), 2)
+        # Group hash is the terminal hash of the 2nd logical chunk.
+        self.assertTrue(result[0][2].endswith("agg:2:h3"), result[0][2])
+        # Original-coordinate token range of the aggregate.
+        self.assertEqual((result[0][0], result[0][1]), (0, 2 * self.block_size))
+        self.assertEqual([m[2] for m in result[0][3]], [10, 11])
+
+
 class TestLoadSpec(unittest.TestCase):
     def test_fields(self):
         spec = LoadSpec(vllm_cached_tokens=10, kvpool_cached_tokens=20, can_load=True)

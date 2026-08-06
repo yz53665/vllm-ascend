@@ -166,6 +166,12 @@ class KVPoolWorker:
         self.h2d_stagger_us = int(extra_config.get("h2d_stagger_us", 0))
         self.layerwise_max_transfer_blocks = int(extra_config.get("layerwise_max_transfer_blocks", 0))
         self.layerwise_max_transfer_bytes = int(extra_config.get("layerwise_max_transfer_bytes", 0))
+        # Number of consecutive full blocks aggregated into a single store
+        # object (one key, one blob) to reduce small-block transfer overhead.
+        # 1 disables aggregation.
+        self.block_aggregation = int(extra_config.get("block_aggregation", 1))
+        if self.block_aggregation < 1:
+            raise ValueError(f"block_aggregation must be >= 1, got {self.block_aggregation}")
 
         logger.info(
             "use_hybrid: %s, use_mamba: %s, num_kv_cache_groups: %s, hash_block_size: %s, lcm_block_size: %s",
@@ -210,6 +216,12 @@ class KVPoolWorker:
         self.effective_tp_size = tp_mismatch_info.effective_tp_size
         self.tp_mismatch = tp_mismatch_info.enabled
         if self.tp_mismatch:
+            if self.block_aggregation > 1:
+                raise ValueError(
+                    f"block_aggregation={self.block_aggregation} is not supported with "
+                    "TP mismatch (local_tp={}, peer_tp={}). ".format(self.tp_size, self.peer_tp_size)
+                    + "The strided I/O path requires per-block key/addressing."
+                )
             if self.use_sparse:
                 raise ValueError(
                     f"TP mismatch (local_tp={self.tp_size}, peer_tp={self.peer_tp_size}) "
@@ -286,7 +298,12 @@ class KVPoolWorker:
             )
 
         self.token_database = ChunkedTokenDatabase(
-            self.metadata, self.grouped_block_size, partitions, self.use_hybrid, self.hash_block_size
+            self.metadata,
+            self.grouped_block_size,
+            partitions,
+            self.use_hybrid,
+            self.hash_block_size,
+            block_aggregation=self.block_aggregation,
         )
         self.cache_coordinator = self._build_cache_coordinator(vllm_config)
         self.token_database.cache_coordinator = self.cache_coordinator
@@ -319,6 +336,20 @@ class KVPoolWorker:
         self.enable_kv_events = False
         if kv_event_config and kv_event_config.enable_kv_cache_events:
             self.enable_kv_events = True
+        # Effective aggregation switch: off for layerwise (separate GVA/key
+        # threads), MLA put_step>1 (per-chunk sharding) and KV events
+        # (per-block BlockStored bookkeeping). TP mismatch is rejected
+        # separately in _init_key_head_config.
+        self.use_block_aggregation = (
+            self.block_aggregation > 1 and self.put_step <= 1 and not self.enable_kv_events
+        )
+        if self.block_aggregation > 1 and not self.use_block_aggregation:
+            logger.info(
+                "block_aggregation=%d requested but disabled: put_step=%d enable_kv_events=%s",
+                self.block_aggregation,
+                self.put_step,
+                self.enable_kv_events,
+            )
 
     def _init_state_vars(self) -> None:
         self.kv_send_thread: KVTransferThread | None = None
@@ -504,6 +535,7 @@ class KVPoolWorker:
                     ready_event_sending,
                     self.group_uses_align_state,
                     self.enable_kv_events,
+                    use_block_aggregation=self.use_block_aggregation,
                 )
                 self.kv_send_thread.start()
                 ready_event_sending.wait()
@@ -517,6 +549,7 @@ class KVPoolWorker:
                     self.tp_size,
                     self.dcp_size,
                     ready_event,
+                    use_block_aggregation=self.use_block_aggregation,
                 )
                 self.kv_recv_thread.start()
                 ready_event.wait()
@@ -860,7 +893,9 @@ class KVPoolWorker:
             addr_list = []
             size_list = []
             key_list = []
-            block_id_list: list[int] = []
+            # Per-key list of member block ids: aggregated keys carry all N
+            # member ids so a failed aggregate marks every member as invalid.
+            block_id_list: list[list[int]] = []
             load_masks = self.token_database.load_mask(request.block_hashes, token_len)
             for group_id in load_group_ids:
                 if group_id >= len(request.block_ids_by_group):
@@ -869,36 +904,68 @@ class KVPoolWorker:
                 group_block_size = self.grouped_block_size[group_id]
                 mask_num = load_spec.vllm_cached_tokens // group_block_size * group_block_size
                 skip_null = group_id < len(self.group_uses_align_state) and self.group_uses_align_state[group_id]
+                use_agg = self.use_block_aggregation and not skip_null
 
                 def chunk_filter(start: int, group_id=group_id, load_masks=load_masks) -> bool:
                     return self.token_database.mask_allows_chunk(load_masks, group_id, start)
 
-                for (
-                    start,
-                    end,
-                    key,
-                    _block_hash,
-                    block_id,
-                ) in self.token_database.process_token_key_strings_with_block_ids(
-                    token_len,
-                    request.block_hashes,
-                    block_ids,
-                    mask_num,
-                    kv_cache_group_id=group_id,
-                    skip_null_blocks=skip_null,
-                    chunk_filter=chunk_filter,
-                ):
-                    addr, size, block_id = self.token_database.prepare_value(
+                if use_agg:
+                    for start, end, key, members in (
+                        self.token_database.process_agg_token_key_strings_with_block_ids(
+                            token_len,
+                            request.block_hashes,
+                            block_ids,
+                            mask_num,
+                            kv_cache_group_id=group_id,
+                            skip_null_blocks=skip_null,
+                            chunk_filter=chunk_filter,
+                        )
+                    ):
+                        key_addrs: list[int] = []
+                        key_sizes: list[int] = []
+                        member_ids: list[int] = []
+                        for m_start, m_end, m_block_id in members:
+                            addr, size, _ = self.token_database.prepare_value(
+                                m_start,
+                                m_end,
+                                block_ids,
+                                kv_cache_group_id=group_id,
+                                block_id=m_block_id,
+                            )
+                            key_addrs.extend(addr)
+                            key_sizes.extend(size)
+                            member_ids.append(m_block_id)
+                        key_list.append(key)
+                        addr_list.append(key_addrs)
+                        size_list.append(key_sizes)
+                        block_id_list.append(member_ids)
+                else:
+                    for (
                         start,
                         end,
+                        key,
+                        _block_hash,
+                        block_id,
+                    ) in self.token_database.process_token_key_strings_with_block_ids(
+                        token_len,
+                        request.block_hashes,
                         block_ids,
+                        mask_num,
                         kv_cache_group_id=group_id,
-                        block_id=block_id,
-                    )
-                    key_list.append(key)
-                    addr_list.append(addr)
-                    size_list.append(size)
-                    block_id_list.append(block_id)
+                        skip_null_blocks=skip_null,
+                        chunk_filter=chunk_filter,
+                    ):
+                        addr, size, block_id = self.token_database.prepare_value(
+                            start,
+                            end,
+                            block_ids,
+                            kv_cache_group_id=group_id,
+                            block_id=block_id,
+                        )
+                        key_list.append(key)
+                        addr_list.append(addr)
+                        size_list.append(size)
+                        block_id_list.append([block_id])
             if not key_list:
                 continue
             key_list_c = _circular_shift(key_list, self.tp_rank % len(key_list))
@@ -914,29 +981,18 @@ class KVPoolWorker:
                 key_list_c[:3],
             )
             ret = self.m_store.get(key_list_c, addr_list_c, size_list_c)
-            if ret is not None and any(r != 0 for r in ret):
-                missing_block_ids = record_failed_blocks(
-                    block_id_list_c,
-                    ret,
-                )
+            missing_block_ids: set[int] = set()
+            if ret is not None:
+                for block_ids, code in zip(block_id_list_c, ret):
+                    if code != 0:
+                        missing_block_ids.update(block_ids)
+            else:
+                for block_ids in block_id_list_c:
+                    missing_block_ids.update(block_ids)
+            if missing_block_ids:
                 if len(request.block_ids_by_group) == 1:
                     self._invalid_block_ids.update(missing_block_ids)
-                elif missing_block_ids:
-                    logger.error(
-                        "KV load failed for hybrid request %s. "
-                        "Skip invalid-block fallback to avoid scheduler crash. "
-                        "failed_blocks=%s",
-                        request.req_id,
-                        missing_block_ids,
-                    )
-            elif ret is None:
-                missing_block_ids = record_failed_blocks(
-                    block_id_list_c,
-                    [1] * len(block_id_list_c),
-                )
-                if len(request.block_ids_by_group) == 1:
-                    self._invalid_block_ids.update(missing_block_ids)
-                elif missing_block_ids:
+                else:
                     logger.error(
                         "KV load failed for hybrid request %s. "
                         "Skip invalid-block fallback to avoid scheduler crash. "
@@ -1871,6 +1927,13 @@ class KVPoolWorker:
                 keys.extend(item.to_string() for item in pool_key.split_layers(self.num_layers))
                 starts.append(start)
                 ends.append(end)
+        elif self.use_block_aggregation and not self.group_uses_align_state[group_id]:
+            for start, end, key_string in self.token_database.process_agg_token_key_strings(
+                token_len, block_hashes, kv_cache_group_id=group_id
+            ):
+                keys.append(key_string)
+                starts.append(start)
+                ends.append(end)
         else:
             for start, end, key_string, _ in self.token_database.process_token_key_strings(
                 token_len, block_hashes, kv_cache_group_id=group_id
@@ -1994,7 +2057,10 @@ class KVPoolWorker:
         include_all_ranks: bool,
         hbm_hit_tokens: int = 0,
     ) -> int | None:
-        if self.cache_coordinator is None or use_layerwise:
+        if self.cache_coordinator is None or use_layerwise or getattr(self, "use_block_aggregation", False):
+            # block aggregation changes the storage granularity, so the
+            # coordinator's chunk-level lookup mask would disagree with the
+            # aggregate keys; fall back to the standard per-group lookup.
             return None
         if sorted(kv_cache_group_ids) != list(range(self.num_kv_cache_groups)):
             return None
