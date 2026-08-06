@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import tests.ut.distributed.ascend_store._mock_deps  # noqa: F401, E402
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.backend.backend import Backend
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.backend.mooncake_backend import (
+    MooncakeBackend,
     MooncakeStoreConfig,
     _convert_to_bytes,
     _parse_global_segment_size,
@@ -108,6 +109,18 @@ class TestMooncakeStoreConfig(unittest.TestCase):
             self.assertEqual(cfg.ssd_offload_path, "")
         finally:
             os.unlink(path)
+
+    def test_from_file_staging_buffer_size(self):
+        cfg = _make_mooncake_store_config(staging_buffer_size="4MB")
+        self.assertEqual(cfg.staging_buffer_size, 4 * 1024**2)
+
+    def test_from_file_staging_buffer_size_int(self):
+        cfg = _make_mooncake_store_config(staging_buffer_size=8192)
+        self.assertEqual(cfg.staging_buffer_size, 8192)
+
+    def test_from_file_staging_buffer_size_default(self):
+        cfg = _make_mooncake_store_config()
+        self.assertEqual(cfg.staging_buffer_size, 0)
 
     def test_from_file_ssd_offload(self):
         ssd_path = TestMooncakeStoreConfig._writable_ssd_path()
@@ -420,6 +433,194 @@ class TestMooncakeBackendMethods(unittest.TestCase):
         ):
             b.register_buffer([100], [200])
             mock_te.register_buffer.assert_called_once()
+
+
+# =========================================================================
+# MooncakeBackend staging (mocked pool / torch)
+# =========================================================================
+class _FakeStagingPool:
+    """Minimal stand-in for _StagingBufferPool used by staging tests."""
+
+    def __init__(self):
+        self._next = 0x1000
+        self.acquired: list[int] = []
+        self.released: list[int] = []
+
+    def acquire(self, count):
+        ids = [self._next + i for i in range(count)]
+        self._next += count
+        self.acquired.extend(ids)
+        return ids
+
+    def release(self, ids):
+        self.released.extend(ids)
+
+    def ptr(self, buffer_id):
+        return buffer_id
+
+
+class TestMooncakeStaging(unittest.TestCase):
+    def _make_staging_backend(self):
+        with (
+            patch.dict(os.environ, {"MOONCAKE_CONFIG_PATH": "/dev/null"}),
+            patch.object(MooncakeBackend, "__init__", lambda self, pc: None),
+        ):
+            backend = MooncakeBackend.__new__(MooncakeBackend)
+            backend.store = MagicMock()
+            backend.config = MagicMock()
+            backend.local_seg = "127.0.0.1:1234"
+            backend._lazy_init = False
+            backend._store_initialized = True
+            backend._use_fabric_mem = False
+            backend._store_init_lock = MagicMock()
+            backend.staging_buffer_size = 4096
+            backend._staging_enabled = True
+            backend._staging_pool = None
+            backend._staging_pool_lock = MagicMock()
+            return backend
+
+    def _attach_fake_pool(self, backend):
+        pool = _FakeStagingPool()
+        backend._ensure_staging_pool = lambda: pool
+        backend._launch_memcpy = MagicMock()
+        return pool
+
+    @staticmethod
+    def _sync_patch():
+        return patch(
+            "vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.backend."
+            "mooncake_backend.torch.npu.synchronize"
+        )
+
+    # -- pure chunking logic ------------------------------------------------
+
+    def test_chunk_members_single_buffer_not_staged(self):
+        result = MooncakeBackend._chunk_members([[10]], [[100]], 4096)
+        self.assertIsNone(result[0])
+
+    def test_chunk_members_empty_not_staged(self):
+        result = MooncakeBackend._chunk_members([[]], [[]], 4096)
+        self.assertIsNone(result[0])
+
+    def test_chunk_members_within_threshold_one_chunk(self):
+        result = MooncakeBackend._chunk_members([[10, 20, 30]], [[100, 100, 100]], 4096)
+        self.assertEqual(result, [[([(10, 100), (20, 100), (30, 100)], 300)]])
+
+    def test_chunk_members_splits_over_threshold(self):
+        result = MooncakeBackend._chunk_members([[10, 20, 30]], [[100, 100, 100]], 250)
+        self.assertEqual(result, [[([(10, 100), (20, 100)], 200), ([(30, 100)], 100)]])
+
+    def test_chunk_members_exact_fit(self):
+        result = MooncakeBackend._chunk_members([[10, 20]], [[100, 100]], 200)
+        self.assertEqual(result, [[([(10, 100), (20, 100)], 200)]])
+
+    def test_chunk_members_mixed_keys(self):
+        result = MooncakeBackend._chunk_members(
+            [[1, 2], [3], [4, 5, 6]], [[50, 50], [10], [80, 80, 80]], 150
+        )
+        self.assertEqual(result[0], [([(1, 50), (2, 50)], 100)])
+        self.assertIsNone(result[1])
+        self.assertEqual(result[2], [([(4, 80)], 80), ([(5, 80)], 80), ([(6, 80)], 80)])
+
+    # -- _stage_put ---------------------------------------------------------
+
+    def test_stage_put_no_multi_buffer_keys(self):
+        b = self._make_staging_backend()
+        b._launch_memcpy = MagicMock()
+        self.assertIsNone(b._stage_put([[10], [20]], [[100], [200]]))
+
+    def test_stage_put_contiguous_staging(self):
+        b = self._make_staging_backend()
+        pool = self._attach_fake_pool(b)
+        staging = b._stage_put([[10, 20], [30]], [[100, 100], [200]])
+        self.assertEqual(staging["addrs"], [[0x1000], [30]])  # k1 -> one contiguous ptr
+        self.assertEqual(staging["sizes"], [[200], [200]])
+        self.assertEqual(len(pool.acquired), 1)
+        ops = b._launch_memcpy.call_args[0][0]
+        self.assertEqual(ops, [(10, 0x1000, 100), (20, 0x1000 + 100, 100)])
+
+    def test_stage_put_multi_chunk(self):
+        b = self._make_staging_backend()
+        b.staging_buffer_size = 160
+        pool = self._attach_fake_pool(b)
+        staging = b._stage_put([[10, 20, 30]], [[80, 80, 80]])
+        self.assertEqual(staging["addrs"], [[0x1000, 0x1001]])
+        self.assertEqual(staging["sizes"], [[160, 80]])
+        ops = b._launch_memcpy.call_args[0][0]
+        self.assertEqual(ops, [(10, 0x1000, 80), (20, 0x1000 + 80, 80), (30, 0x1001, 80)])
+
+    # -- _scatter_back_get --------------------------------------------------
+
+    def test_scatter_back_get_skips_failed_keys(self):
+        b = self._make_staging_backend()
+        self._attach_fake_pool(b)
+        staging = {
+            "chunks": [(0, [(10, 100), (20, 100)], 200), (1, [(30, 100)], 100)],
+            "buffer_ids": [0x1000, 0x1001],
+        }
+        b._scatter_back_get(staging, [0, -1])
+        ops = b._launch_memcpy.call_args[0][0]
+        self.assertEqual(ops, [(0x1000, 10, 100), (0x1000 + 100, 20, 100)])
+
+    def test_scatter_back_get_all_failed(self):
+        b = self._make_staging_backend()
+        self._attach_fake_pool(b)
+        staging = {"chunks": [(0, [(10, 100)], 100)], "buffer_ids": [0x1000]}
+        b._scatter_back_get(staging, [-5])
+        b._launch_memcpy.assert_not_called()
+
+    # -- put/get integration ------------------------------------------------
+
+    def test_put_with_staging(self):
+        b = self._make_staging_backend()
+        pool = self._attach_fake_pool(b)
+        b.store.batch_put_from_multi_buffers.return_value = [0, 0]
+        with self._sync_patch() as mock_sync:
+            b.put(["k1", "k2"], [[10, 20], [30]], [[100, 100], [200]])
+        call = b.store.batch_put_from_multi_buffers.call_args
+        self.assertEqual(call[0][1], [[0x1000], [30]])  # k1 staged to one contiguous buffer
+        self.assertEqual(call[0][2], [[200], [200]])
+        mock_sync.assert_called_once()
+        self.assertEqual(pool.released, [0x1000])
+
+    def test_get_with_staging(self):
+        b = self._make_staging_backend()
+        pool = self._attach_fake_pool(b)
+        b.store.batch_get_into_multi_buffers.return_value = [0, 0]
+        with self._sync_patch() as mock_sync:
+            result = b.get(["k1", "k2"], [[10, 20], [30]], [[100, 100], [200]])
+        call = b.store.batch_get_into_multi_buffers.call_args
+        self.assertEqual(call[0][1], [[0x1000], [30]])
+        self.assertEqual(call[0][2], [[200], [200]])
+        ops = b._launch_memcpy.call_args[0][0]
+        self.assertEqual(ops, [(0x1000, 10, 100), (0x1000 + 100, 20, 100)])
+        mock_sync.assert_called_once()
+        self.assertEqual(result, [0, 0])
+        self.assertEqual(pool.released, [0x1000])
+
+    def test_get_with_staging_returns_codes(self):
+        b = self._make_staging_backend()
+        self._attach_fake_pool(b)
+        b.store.batch_get_into_multi_buffers.return_value = [0, -1, 5]
+        result = b.get(["k1", "k2", "k3"], [[10, 20], [30], [40]], [[100, 100], [200], [300]])
+        self.assertEqual(result, [0, -1, 0])  # positive codes normalized to 0
+
+    def test_put_staging_fallback_on_error(self):
+        b = self._make_staging_backend()
+        b._stage_put = MagicMock(side_effect=RuntimeError("oom"))
+        b.store.batch_put_from_multi_buffers.return_value = [0]
+        b.put(["k1"], [[10, 20]], [[100, 100]])
+        call = b.store.batch_put_from_multi_buffers.call_args
+        self.assertEqual(call[0][1], [[10, 20]])  # original scattered addrs preserved
+
+    def test_get_staging_fallback_on_error(self):
+        b = self._make_staging_backend()
+        b._stage_get = MagicMock(side_effect=RuntimeError("oom"))
+        b.store.batch_get_into_multi_buffers.return_value = [0]
+        result = b.get(["k1"], [[10, 20]], [[100, 100]])
+        call = b.store.batch_get_into_multi_buffers.call_args
+        self.assertEqual(call[0][1], [[10, 20]])
+        self.assertEqual(result, [0])
 
 
 # =========================================================================

@@ -43,6 +43,17 @@ When `MultiConnector` is used, configure `kv_load_failure_policy` on the `MultiC
 | `prefill_pp_size` | Prefill PP size, needs to be set when Prefill node enables PP. |
 | `prefill_pp_layer_partition` | Prefill PP layer partition, needs to be set when Prefill node enables PP. |
 
+`block_aggregation` groups consecutive full blocks into one store object, but
+the blocks stay at scattered addresses. To hand Mooncake a physically
+contiguous buffer per store object, set `staging_buffer_size` in
+`mooncake.json` (bytes, e.g. `"4MB"`): the backend copies each key's scattered
+block slices into pre-allocated contiguous staging buffers (grouped every
+`staging_buffer_size` bytes) before transfer, and copies them back on load.
+This is independent of `block_aggregation` and also applies when
+`block_aggregation=1`. The default value is 0 (disabled). It requires the
+`mooncake` backend and the pointer-level Triton memcpy kernel (not available
+on 310P).
+
 ### Environment Variable Configuration
 
 To guarantee uniform hash generation, it is required to synchronize the PYTHONHASHSEED environment variable across all nodes upon enabling KV Pool.
