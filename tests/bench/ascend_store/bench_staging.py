@@ -17,15 +17,21 @@ Usage:
     python tests/bench/ascend_store/bench_staging.py \
         --keys 64 --members 4 --block-mb 1 --iters 10 --staging-size 4MB
 
+    # write-only (fresh keys per round — every put is a real write)
+    python tests/bench/ascend_store/bench_staging.py --mode put --keys 64 --iters 10
+
+    # read-only (all keys pre-loaded before the timed loop)
+    python tests/bench/ascend_store/bench_staging.py --mode get --keys 64 --iters 10
+
 Notes:
     - Timing is done with mock.patch wrappers around each stage method;
       the real implementations still run, so numbers are real wall-clock.
-    - A warm-up iteration runs before timing (pool creation, engine warm-up,
-      one-time costs are excluded).
     - ``torch.npu.synchronize`` is timed as "sync(d2d wait)" — that is where
       the actual D2D staging copy executes, not the memcpy launch itself.
     - Mooncake RDMA time appears as "mooncake_rdma"; C++ internals are not
       visible from Python, use torch_npu profiler for kernel-level detail.
+    - Each round uses unique keys (``bench:{round}:{i}``), so every put is a
+      real write rather than a no-op overwrite.
 """
 
 import argparse
@@ -135,10 +141,20 @@ def parse_args():
         default=None,
         help="Path to mooncake.json (falls back to $MOONCAKE_CONFIG_PATH).",
     )
-    parser.add_argument("--keys", type=int, default=64, help="Number of keys per iteration.")
+    parser.add_argument("--keys", type=int, default=64, help="Number of keys per round.")
     parser.add_argument("--members", type=int, default=4, help="Scattered buffers per key.")
     parser.add_argument("--block-mb", type=float, default=1.0, help="Bytes per member buffer (MiB).")
-    parser.add_argument("--iters", type=int, default=10, help="Put/get iterations after warm-up.")
+    parser.add_argument("--iters", type=int, default=10, help="Number of rounds (each round uses unique keys).")
+    parser.add_argument(
+        "--mode",
+        choices=["put", "get", "both"],
+        default="both",
+        help=(
+            "put: write-only (fresh keys per round); "
+            "get: read-only (keys pre-loaded then each round reads a different batch); "
+            "both: put then get per round."
+        ),
+    )
     parser.add_argument(
         "--staging-size",
         default=None,
@@ -197,37 +213,44 @@ def main():
     get_addrs = [get_ptrs[k * args.members:(k + 1) * args.members] for k in range(args.keys)]
     sizes = [[block_bytes] * args.members for _ in range(args.keys)]
 
-    # Warm-up: staging pool creation, transfer-engine/segment warm-up, etc.
-    warm_keys = [f"warm:{i}" for i in range(args.keys)]
-    backend.put(warm_keys, addrs, sizes)
-    backend.get(warm_keys, get_addrs, sizes)
-    torch.npu.synchronize()
-
     timer = StageTimer()
+
+    if args.mode == "get":
+        # Pre-load all keys the timed loop will read. Runs on the raw store
+        # (no proxy yet) so it is excluded from the report.
+        print(f"pre-loading {args.iters * args.keys} keys ...")
+        for it in range(args.iters):
+            pre_keys = [f"bench:{it}:{i}" for i in range(args.keys)]
+            backend.put(pre_keys, addrs, sizes)
+        torch.npu.synchronize()
     # C++ store methods are read-only; time RDMA through a forwarding proxy.
     backend.store = TimedStore(backend.store, timer)
 
     for it in range(args.iters):
         keys = [f"bench:{it}:{i}" for i in range(args.keys)]
-        with (
-            wrap(timer, backend, "_stage_put", "put: stage_put(py)"),
-            wrap(timer, backend, "_launch_memcpy", "put: memcpy.launch"),
-            wrap_sync(timer, "put: sync(d2d wait)"),
-        ):
-            with timer.time("put: total"):
-                backend.put(keys, addrs, sizes)
 
-        with (
-            wrap(timer, backend, "_stage_get", "get: stage_get(py)"),
-            wrap(timer, backend, "_scatter_back_get", "get: scatter_back(py)"),
-            wrap(timer, backend, "_launch_memcpy", "get: memcpy.launch"),
-            wrap_sync(timer, "get: sync(d2d wait)"),
-        ):
-            with timer.time("get: total"):
-                res = backend.get(keys, get_addrs, sizes)
+        if args.mode in ("put", "both"):
+            with (
+                wrap(timer, backend, "_stage_put", "put: stage_put(py)"),
+                wrap(timer, backend, "_launch_memcpy", "put: memcpy.launch"),
+                wrap_sync(timer, "put: sync(d2d wait)"),
+            ):
+                with timer.time("put: total"):
+                    backend.put(keys, addrs, sizes)
 
-        failed = sum(1 for v in res if v != 0) if res else -1
-        print(f"iter {it}: get failed keys={failed}")
+        if args.mode in ("get", "both"):
+            with (
+                wrap(timer, backend, "_stage_get", "get: stage_get(py)"),
+                wrap(timer, backend, "_scatter_back_get", "get: scatter_back(py)"),
+                wrap(timer, backend, "_launch_memcpy", "get: memcpy.launch"),
+                wrap_sync(timer, "get: sync(d2d wait)"),
+            ):
+                with timer.time("get: total"):
+                    res = backend.get(keys, get_addrs, sizes)
+
+            failed = sum(1 for v in res if v != 0) if res else -1
+            if failed:
+                print(f"round {it}: get failed keys={failed}")
 
     if args.verify:
         torch.npu.synchronize()
