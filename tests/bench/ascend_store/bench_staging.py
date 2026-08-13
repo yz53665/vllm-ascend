@@ -100,6 +100,34 @@ def wrap_sync(timer, stage):
     return mock.patch.object(mooncake_backend.torch.npu, "synchronize", timed)
 
 
+class TimedStore:
+    """Proxy around the C++ Mooncake store that times the RDMA entry points.
+
+    ``MooncakeDistributedStore`` is a pybind11 object: its methods are
+    read-only attributes, so ``mock.patch`` cannot wrap them. Instead the
+    backend's ``store`` is swapped for this proxy, which forwards every
+    attribute and only wraps the two RDMA calls.
+    """
+
+    _TIMED_METHODS = ("batch_put_from_multi_buffers", "batch_get_into_multi_buffers")
+
+    def __init__(self, real, timer):
+        self._real = real
+        self._timer = timer
+
+    def __getattr__(self, attr):
+        real_attr = getattr(self._real, attr)
+        if attr in self._TIMED_METHODS:
+            stage = "put: mooncake_rdma" if attr == "batch_put_from_multi_buffers" else "get: mooncake_rdma"
+
+            def timed(*args, **kwargs):
+                with self._timer.time(stage):
+                    return real_attr(*args, **kwargs)
+
+            return timed
+        return real_attr
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -176,20 +204,21 @@ def main():
     torch.npu.synchronize()
 
     timer = StageTimer()
+    # C++ store methods are read-only; time RDMA through a forwarding proxy.
+    backend.store = TimedStore(backend.store, timer)
+
     for it in range(args.iters):
         keys = [f"bench:{it}:{i}" for i in range(args.keys)]
         with (
             wrap(timer, backend, "_stage_put", "put: stage_put(py)"),
             wrap(timer, backend, "_launch_memcpy", "put: memcpy.launch"),
             wrap_sync(timer, "put: sync(d2d wait)"),
-            wrap(timer, backend.store, "batch_put_from_multi_buffers", "put: mooncake_rdma"),
         ):
             with timer.time("put: total"):
                 backend.put(keys, addrs, sizes)
 
         with (
             wrap(timer, backend, "_stage_get", "get: stage_get(py)"),
-            wrap(timer, backend.store, "batch_get_into_multi_buffers", "get: mooncake_rdma"),
             wrap(timer, backend, "_scatter_back_get", "get: scatter_back(py)"),
             wrap(timer, backend, "_launch_memcpy", "get: memcpy.launch"),
             wrap_sync(timer, "get: sync(d2d wait)"),
