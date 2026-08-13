@@ -24,7 +24,7 @@ DEFAULT_GLOBAL_SEGMENT_SIZE = 1073741824  # 1.0 GiB
 DEFAULT_LOCAL_BUFFER_SIZE = 1073741824  # 1.0 GiB
 # Number of contiguous staging buffers pre-allocated per rank. The pool grows
 # on demand when a single put/get needs more concurrent buffers.
-DEFAULT_STAGING_NUM_BUFFERS = 4
+DEFAULT_STAGING_NUM_BUFFERS = 256
 STAGING_COPY_BLOCK_SIZE = 8192
 
 
