@@ -1,11 +1,13 @@
 # Standard
 import functools
+import itertools
 import json
 import os
 import threading
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import regex as re
 import torch
 
@@ -101,6 +103,7 @@ class _StagingBufferPool:
         self._backend = backend
         self.buffer_size = buffer_size
         self._buffers: list[torch.Tensor] = []
+        self._ptrs: list[int] = []
         self._free: list[int] = []
         self._lock = threading.Lock()
         with self._lock:
@@ -110,6 +113,9 @@ class _StagingBufferPool:
     def _add_buffer_unlocked(self) -> None:
         buf = torch.empty(self.buffer_size, dtype=torch.uint8, device="npu")
         self._buffers.append(buf)
+        # data_ptr() is a torch C call; cache it so ptr() is a plain list
+        # lookup on every staging chunk.
+        self._ptrs.append(buf.data_ptr())
         self._free.append(len(self._buffers) - 1)
         if not self._backend._use_fabric_mem:
             local_hostname = get_ip()
@@ -132,7 +138,7 @@ class _StagingBufferPool:
             self._free.extend(buffer_ids)
 
     def ptr(self, buffer_id: int) -> int:
-        return self._buffers[buffer_id].data_ptr()
+        return self._ptrs[buffer_id]
 
 
 class MooncakeBackend(Backend):
@@ -158,6 +164,13 @@ class MooncakeBackend(Backend):
         self._staging_enabled = self.staging_buffer_size > 0 and _staging_memcpy_available()
         self._staging_pool: _StagingBufferPool | None = None
         self._staging_pool_lock = threading.Lock()
+        # Pre-allocated index tensors for _launch_memcpy — avoids NPU alloc +
+        # H2D copy on every staging call.  Grown on demand if the number of
+        # copy ops ever exceeds the initial capacity.
+        self._memcpy_max_ops = 0
+        self._memcpy_src: torch.Tensor | None = None
+        self._memcpy_dst: torch.Tensor | None = None
+        self._memcpy_sz: torch.Tensor | None = None
         if self.staging_buffer_size > 0 and not self._staging_enabled:
             logger.warning(
                 "staging_buffer_size=%d requested but staging is disabled "
@@ -169,6 +182,26 @@ class MooncakeBackend(Backend):
         if not self._lazy_init:
             self.store = self._setup_store()
             self._store_initialized = True
+            self._warmup_memcpy_kernel()
+
+    def _warmup_memcpy_kernel(self) -> None:
+        """Compile/launch the staging memcpy kernel once at store init.
+
+        The first Triton launch pays JIT compilation; triggering it here moves
+        that cost out of the first put/get request. No-op when staging is
+        disabled or the kernel is unavailable.
+        """
+        if not self._staging_enabled:
+            return
+        try:
+            src = torch.empty(1, dtype=torch.uint8, device="npu")
+            self._launch_memcpy([(src.data_ptr(), src.data_ptr(), 1)])
+        except Exception:
+            logger.warning(
+                "Staging memcpy kernel warm-up failed; the first staging "
+                "transfer will pay the JIT cost.",
+                exc_info=True,
+            )
 
     def ensure_initialized(self):
         if self._store_initialized:
@@ -181,6 +214,7 @@ class MooncakeBackend(Backend):
             logger.info("Initializing Mooncake store. metadata_server=%s", self.config.metadata_server)
             self.store = self._setup_store()
             self._store_initialized = True
+            self._warmup_memcpy_kernel()
 
     def _setup_store(self):
         try:
@@ -436,6 +470,73 @@ class MooncakeBackend(Backend):
             chunks_per_key.append(chunks)
         return chunks_per_key
 
+    def _stage_put_uniform(self, addrs: list[list[int]], sizes: list[list[int]]):
+        """Fast path for the common all-members-same-size workload.
+
+        When every member buffer has the same size the greedy chunk packing
+        is purely positional (``staging_buffer_size // member_size`` members
+        per chunk), so the scattered -> contiguous copy plan can be computed
+        with numpy instead of per-member Python loops. Returns None to let
+        the caller fall back to the generic path.
+        """
+        if not addrs:
+            return None
+        member_size = next((ks[0] for ks in sizes if ks), 0)
+        if member_size <= 0 or any(s != member_size for ks in sizes for s in ks):
+            return None
+        members_per_chunk = self.staging_buffer_size // member_size
+        if members_per_chunk <= 0:
+            return None  # a single member already exceeds the threshold
+        counts = np.array([len(a) for a in addrs], dtype=np.int64)
+        staged = counts > 1
+        n_chunks_per_key = np.where(staged, (counts + members_per_chunk - 1) // members_per_chunk, 0)
+        n_chunks = int(n_chunks_per_key.sum())
+        if n_chunks == 0:
+            return None
+        pool = self._ensure_staging_pool()
+        buffer_ids = pool.acquire(n_chunks)
+        base = np.array([pool.ptr(b) for b in buffer_ids], dtype=np.int64)
+        # Flat member -> key / within-key position / chunk mapping.
+        total = int(counts.sum())
+        key_ids = np.repeat(np.arange(len(addrs)), counts)
+        key_starts = np.concatenate([[0], np.cumsum(counts)])[:-1]
+        within = np.arange(total) - key_starts[key_ids]
+        mask = staged[key_ids]
+        srcs = np.fromiter(itertools.chain.from_iterable(addrs), dtype=np.int64, count=total)
+        chunk_base = np.concatenate([[0], np.cumsum(n_chunks_per_key)])[:-1]
+        global_chunk = chunk_base[key_ids] + within // members_per_chunk
+        offsets = (within % members_per_chunk) * member_size
+        copy_ops = np.stack(
+            [
+                srcs[mask],
+                base[global_chunk[mask]] + offsets[mask],
+                np.full(int(mask.sum()), member_size, dtype=np.int64),
+            ],
+            axis=1,
+        )
+        staged_addrs: list[list[int]] = []
+        staged_sizes: list[list[int]] = []
+        b = 0
+        for k, m in enumerate(counts.tolist()):
+            if m <= 1:
+                staged_addrs.append(addrs[k])
+                staged_sizes.append(sizes[k])
+                continue
+            nb = int(n_chunks_per_key[k])
+            key_staged_addrs = [int(base[b + i]) for i in range(nb)]
+            remaining = m
+            key_staged_sizes = []
+            for _ in range(nb):
+                take = min(members_per_chunk, remaining)
+                key_staged_sizes.append(take * member_size)
+                remaining -= take
+            staged_addrs.append(key_staged_addrs)
+            staged_sizes.append(key_staged_sizes)
+            b += nb
+        if copy_ops.size:
+            self._launch_memcpy(copy_ops)
+        return {"addrs": staged_addrs, "sizes": staged_sizes, "buffer_ids": buffer_ids}
+
     def _stage_put(self, addrs: list[list[int]], sizes: list[list[int]]):
         """Copy scattered member buffers into contiguous staging buffers.
 
@@ -445,6 +546,9 @@ class MooncakeBackend(Backend):
         staging. The caller must wait on the copies before handing the
         buffers to Mooncake and release the ids afterwards.
         """
+        staged = self._stage_put_uniform(addrs, sizes)
+        if staged is not None:
+            return staged
         chunks_per_key = self._chunk_members(addrs, sizes, self.staging_buffer_size)
         if not any(chunks is not None for chunks in chunks_per_key):
             return None
@@ -538,14 +642,29 @@ class MooncakeBackend(Backend):
         if copy_ops:
             self._launch_memcpy(copy_ops)
 
-    @staticmethod
-    def _launch_memcpy(copy_ops: list[tuple[int, int, int]]) -> None:
-        """Launch a batched pointer-level device copy (scattered <-> contiguous)."""
+    def _launch_memcpy(self, copy_ops) -> None:
+        """Launch a batched pointer-level device copy (scattered <-> contiguous).
+
+        ``copy_ops`` is a list of ``(src, dst, size)`` tuples or an ``(n, 3)``
+        int64 array.  Index data is copied once into pre-allocated NPU tensors
+        to avoid per-call NPU allocation and H2D copies.
+        """
+        idx = np.asarray(copy_ops, dtype=np.int64)
+        n = idx.shape[0]
+        if n == 0:
+            return
+        if n > self._memcpy_max_ops:
+            new_max = max(1024, n * 2)
+            self._memcpy_src = torch.empty(new_max, dtype=torch.int64, device="npu")
+            self._memcpy_dst = torch.empty(new_max, dtype=torch.int64, device="npu")
+            self._memcpy_sz = torch.empty(new_max, dtype=torch.int64, device="npu")
+            self._memcpy_max_ops = new_max
+        cpu = torch.from_numpy(idx)
+        self._memcpy_src[:n].copy_(cpu[:, 0], non_blocking=True)
+        self._memcpy_dst[:n].copy_(cpu[:, 1], non_blocking=True)
+        self._memcpy_sz[:n].copy_(cpu[:, 2], non_blocking=True)
         kernel = _get_batch_memcpy_kernel()
-        src_ptrs = torch.tensor([op[0] for op in copy_ops], dtype=torch.int64, device="npu")
-        dst_ptrs = torch.tensor([op[1] for op in copy_ops], dtype=torch.int64, device="npu")
-        sizes = torch.tensor([op[2] for op in copy_ops], dtype=torch.int64, device="npu")
-        kernel[(len(copy_ops),)](src_ptrs, dst_ptrs, sizes, BLOCK_SIZE=STAGING_COPY_BLOCK_SIZE)
+        kernel[(n,)](self._memcpy_src, self._memcpy_dst, self._memcpy_sz, BLOCK_SIZE=STAGING_COPY_BLOCK_SIZE)
 
 
 @dataclass

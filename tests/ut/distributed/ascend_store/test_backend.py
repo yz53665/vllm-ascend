@@ -547,7 +547,8 @@ class TestMooncakeStaging(unittest.TestCase):
         self.assertEqual(staging["addrs"], [[0x1000, 0x1001]])
         self.assertEqual(staging["sizes"], [[160, 80]])
         ops = b._launch_memcpy.call_args[0][0]
-        self.assertEqual(ops, [(10, 0x1000, 80), (20, 0x1000 + 80, 80), (30, 0x1001, 80)])
+        # Uniform member sizes take the numpy fast path.
+        self.assertEqual([tuple(row) for row in ops], [(10, 0x1000, 80), (20, 0x1000 + 80, 80), (30, 0x1001, 80)])
 
     # -- _scatter_back_get --------------------------------------------------
 
