@@ -206,12 +206,15 @@ def main():
             buf.fill_(i % 251)
         torch.npu.synchronize()
     # Registered memory is required for RDMA access.
-    backend.register_buffer(put_ptrs, [block_bytes] * total_members)
-    backend.register_buffer(get_ptrs, [block_bytes] * total_members)
+    register_ptrs = put_ptrs + get_ptrs
+    backend.register_buffer(register_ptrs, [block_bytes] * total_members * 2)
 
     addrs = [put_ptrs[k * args.members:(k + 1) * args.members] for k in range(args.keys)]
     get_addrs = [get_ptrs[k * args.members:(k + 1) * args.members] for k in range(args.keys)]
     sizes = [[block_bytes] * args.members for _ in range(args.keys)]
+
+    keys = [f"bench:-1:{i}" for i in range(args.keys)]
+    backend.put(keys, addrs, sizes)
 
     timer = StageTimer()
 
