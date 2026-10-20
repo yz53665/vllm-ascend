@@ -1,0 +1,1474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SfaRemoteD2HConnector 图解 · PD 分离 Decode Offload</title>
+<script>document.documentElement.classList.add("js");</script>
+<style>
+  :root{
+    --bg:#070b18;
+    --bg2:#0b1224;
+    --panel:#0f1830;
+    --panel2:#121d38;
+    --line:#22304f;
+    --text:#dbe6ff;
+    --muted:#8fa3c8;
+    --cyan:#3ee6ff;
+    --violet:#a78bfa;
+    --green:#34d399;
+    --amber:#fbbf24;
+    --rose:#fb7185;
+    --p:#fbbf24;
+    --d:#3ee6ff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+  /* ---------- nav ---------- */
+  nav{
+    position:sticky;top:0;z-index:50;
+    backdrop-filter:blur(14px);
+    background:rgba(7,11,24,.78);
+    border-bottom:1px solid rgba(62,230,255,.12);
+  }
+  .nav-inner{display:flex;align-items:center;gap:18px;height:56px;overflow-x:auto;white-space:nowrap}
+  .brand{font-family:var(--mono);font-size:13px;color:var(--cyan);letter-spacing:.5px;flex:none}
+  .brand b{color:#fff}
+  .nav-links{display:flex;gap:4px;flex:none}
+  .nav-links a{
+    font-size:13px;color:var(--muted);padding:6px 10px;border-radius:8px;
+    text-decoration:none;transition:.2s;
+  }
+  .nav-links a:hover,.nav-links a.on{color:#fff;background:rgba(62,230,255,.1)}
+
+  /* ---------- hero ---------- */
+  header.hero{
+    position:relative;overflow:hidden;
+    padding:86px 0 72px;
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(900px 380px at 18% 0%,rgba(167,139,250,.16),transparent 60%),
+      radial-gradient(900px 380px at 82% 10%,rgba(62,230,255,.16),transparent 60%),
+      linear-gradient(180deg,#080d1c 0%,#070b18 100%);
+  }
+  .hero::before{
+    content:"";position:absolute;inset:0;
+    background-image:linear-gradient(rgba(62,230,255,.045) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(62,230,255,.045) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse at 50% 30%,#000 30%,transparent 78%);
+    pointer-events:none;
+  }
+  .hero-kicker{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:12px;color:var(--cyan);
+    border:1px solid rgba(62,230,255,.28);background:rgba(62,230,255,.06);
+    padding:5px 12px;border-radius:999px;letter-spacing:.4px;
+  }
+  .hero h1{font-size:clamp(30px,4.4vw,50px);line-height:1.18;margin:22px 0 14px;letter-spacing:-.5px}
+  .grad{background:linear-gradient(100deg,#3ee6ff 0%,#a78bfa 55%,#fbbf24 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lead{font-size:17px;color:#b9c8e6;max-width:820px;margin:0 0 26px}
+  .hero-tags{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{
+    font-family:var(--mono);font-size:12px;color:#cfe0ff;
+    border:1px solid var(--line);background:rgba(18,29,56,.75);
+    padding:5px 10px;border-radius:8px;
+  }
+  .chip.p{color:var(--p);border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.07)}
+  .chip.d{color:var(--d);border-color:rgba(62,230,255,.3);background:rgba(62,230,255,.07)}
+  .chip.g{color:var(--green);border-color:rgba(52,211,153,.3);background:rgba(52,211,153,.07)}
+
+  .hero-flow{display:flex;align-items:center;gap:14px;margin-top:34px;flex-wrap:wrap}
+  .node-box{
+    font-family:var(--mono);font-size:12.5px;padding:10px 16px;border-radius:12px;
+    border:1px solid var(--line);background:var(--panel);position:relative;
+  }
+  .node-box small{display:block;color:var(--muted);font-size:11px;letter-spacing:.3px}
+  .arrow-live{
+    flex:1;min-width:120px;height:2px;position:relative;
+    background:linear-gradient(90deg,rgba(251,191,36,.15),rgba(62,230,255,.15));
+  }
+  .arrow-live::after{
+    content:"";position:absolute;top:-3px;left:0;width:10px;height:8px;border-radius:50%;
+    background:var(--cyan);box-shadow:0 0 14px 3px rgba(62,230,255,.7);
+    animation:travel 2.4s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  @keyframes travel{0%{left:0;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 10px);opacity:0}}
+
+  /* ---------- sections ---------- */
+  main{padding:20px 0 80px}
+  section{padding:58px 0 18px;scroll-margin-top:70px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--cyan);opacity:.8}
+  h2{font-size:clamp(23px,2.6vw,30px);margin:0;letter-spacing:-.3px}
+  .sec-sub{color:var(--muted);font-size:14.5px;margin:6px 0 24px;max-width:900px}
+  h3{font-size:18px;margin:32px 0 12px;letter-spacing:-.2px}
+  h4{font-size:15px;margin:22px 0 8px;color:#cfe0ff}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .muted{color:var(--muted)}
+  .small{font-size:13px}
+  .mono{font-family:var(--mono)}
+
+  .card{
+    background:linear-gradient(180deg,var(--panel) 0%,#0c152a 100%);
+    border:1px solid var(--line);border-radius:16px;padding:22px 24px;
+  }
+  .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+  @media(max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
+
+  .badge{
+    display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.4px;
+    padding:2px 8px;border-radius:6px;vertical-align:middle;
+  }
+  .badge.p{background:rgba(251,191,36,.12);color:var(--p);border:1px solid rgba(251,191,36,.3)}
+  .badge.d{background:rgba(62,230,255,.1);color:var(--d);border:1px solid rgba(62,230,255,.3)}
+  .badge.v{background:rgba(167,139,250,.12);color:var(--violet);border:1px solid rgba(167,139,250,.3)}
+  .badge.g{background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.3)}
+
+  /* ---------- code ---------- */
+  pre{
+    margin:14px 0;background:#050914;border:1px solid #1b2a49;border-radius:12px;
+    padding:16px 18px;overflow-x:auto;font-size:13px;line-height:1.65;
+  }
+  pre code{font-family:var(--mono);color:#c8d7f5;white-space:pre}
+  .c-com{color:#607695;font-style:italic}
+  .c-str{color:#a5e3a0}
+  .c-num{color:#f0c674}
+  .c-kw{color:#7dd3fc}
+  .code-cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin:18px 0 -6px;letter-spacing:.4px}
+
+  /* ---------- tables ---------- */
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:#b9c8e6;font-weight:600;background:rgba(18,29,56,.7);font-size:12.5px;letter-spacing:.3px}
+  tr:hover td{background:rgba(62,230,255,.035)}
+  td code,p code,li code{
+    font-family:var(--mono);font-size:12.5px;background:rgba(62,230,255,.08);
+    border:1px solid rgba(62,230,255,.14);border-radius:5px;padding:1px 5px;color:#bfe9ff;
+  }
+
+  /* ---------- topology svg ---------- */
+  .svg-wrap{background:radial-gradient(600px 300px at 50% 40%,rgba(62,230,255,.06),transparent 70%),#080d1c;border:1px solid var(--line);border-radius:16px;padding:10px;overflow-x:auto}
+  svg{display:block;min-width:900px;width:100%;height:auto}
+  .svg-label{font-family:var(--mono);font-size:11.5px;fill:#8fa3c8}
+  .svg-title{font-family:var(--mono);font-size:13px;fill:#dbe6ff}
+  .svg-small{font-family:var(--mono);font-size:10.5px;fill:#7c90b4}
+  .flowline{stroke-dasharray:7 7;animation:dashmove 1.1s linear infinite}
+  @keyframes dashmove{to{stroke-dashoffset:-28}}
+  .pulse{animation:pulseGlow 2.6s ease-in-out infinite}
+  @keyframes pulseGlow{0%,100%{opacity:.55}50%{opacity:1}}
+
+  /* ---------- role matrix ---------- */
+  .matrix{display:grid;grid-template-columns:120px repeat(2,1fr);gap:10px}
+  .matrix .h{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;align-items:center}
+  .mcell{
+    border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+    background:var(--panel);font-size:13px;transition:.25s;
+  }
+  .mcell:hover{border-color:rgba(62,230,255,.4);transform:translateY(-2px)}
+  .mcell b{display:block;font-family:var(--mono);font-size:13.5px;color:#fff;margin-bottom:4px}
+  .mcell span{color:var(--muted);font-size:12px}
+
+  /* ---------- sequence animation ---------- */
+  .seq-shell{background:linear-gradient(180deg,#0a1122,#080d1c);border:1px solid var(--line);border-radius:16px;padding:16px;overflow-x:auto}
+  .seq-stage{position:relative;min-width:1040px;height:780px}
+  .lane-head{
+    position:absolute;top:0;transform:translateX(-50%);
+    font-family:var(--mono);font-size:12px;padding:4px 12px;border-radius:999px;
+    border:1px solid var(--line);background:#0d1730;white-space:nowrap;
+  }
+  .lane-head.p{color:var(--p);border-color:rgba(251,191,36,.35)}
+  .lane-head.d{color:var(--d);border-color:rgba(62,230,255,.35)}
+  .lane-head.m{color:var(--violet);border-color:rgba(167,139,250,.35)}
+  .lifeline{position:absolute;top:44px;bottom:0;width:1px;background:linear-gradient(180deg,rgba(62,230,255,.35),rgba(62,230,255,.05))}
+  .lifeline.p{background:linear-gradient(180deg,rgba(251,191,36,.35),rgba(251,191,36,.04))}
+  .lifeline.m{background:linear-gradient(180deg,rgba(167,139,250,.3),rgba(167,139,250,.03))}
+  .rowline{position:absolute;left:0;right:0;height:1px;background:rgba(34,48,79,.45)}
+  .msg{
+    position:absolute;z-index:5;max-width:330px;
+    display:flex;align-items:center;gap:8px;
+    padding:7px 12px;border-radius:10px;font-size:12.5px;
+    border:1px solid var(--line);background:#101a33;color:#dbe6ff;
+    box-shadow:0 6px 22px rgba(0,0,0,.35);
+    opacity:.18;transition:left .75s cubic-bezier(.4,0,.2,1),top .75s cubic-bezier(.4,0,.2,1),opacity .4s,box-shadow .4s,border-color .4s,background .4s;
+    pointer-events:none;
+  }
+  .msg .tag{
+    font-family:var(--mono);font-size:10px;letter-spacing:.4px;padding:1px 6px;border-radius:5px;
+    background:rgba(62,230,255,.1);color:var(--cyan);border:1px solid rgba(62,230,255,.2);flex:none;
+  }
+  .msg.pending{opacity:.12;z-index:3}
+  .msg.done{opacity:.55;border-color:#24355a;z-index:4}
+  .msg.active{
+    opacity:1;z-index:7;box-shadow:0 0 0 1px rgba(62,230,255,.35),0 8px 30px rgba(62,230,255,.18);
+    border-color:rgba(62,230,255,.55);background:#132244;
+  }
+  .msg.compute .tag{background:rgba(167,139,250,.12);color:var(--violet);border-color:rgba(167,139,250,.25)}
+  .msg.control .tag{background:rgba(251,191,36,.12);color:var(--amber);border-color:rgba(251,191,36,.25)}
+  .msg.data .tag{background:rgba(52,211,153,.12);color:var(--green);border-color:rgba(52,211,153,.25)}
+  .seq-panel{
+    display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;
+    margin-top:12px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  }
+  .seq-panel h4{margin:0 0 4px;font-size:15px;color:#fff}
+  .seq-panel p{margin:0;font-size:13px;color:var(--muted)}
+  .seq-ctrls{display:flex;gap:8px;align-items:center}
+  button{
+    font-family:inherit;font-size:12.5px;color:#dbe6ff;cursor:pointer;
+    background:#152241;border:1px solid var(--line);border-radius:9px;padding:7px 12px;
+    transition:.2s;
+  }
+  button:hover{border-color:rgba(62,230,255,.45);background:#1a2b52}
+  button.primary{background:rgba(62,230,255,.13);border-color:rgba(62,230,255,.4);color:#bff4ff}
+  .dots{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+  .dot{
+    width:24px;height:24px;border-radius:50%;border:1px solid var(--line);
+    background:#0d1730;color:var(--muted);font-family:var(--mono);font-size:11px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s;
+  }
+  .dot.on{background:rgba(62,230,255,.16);border-color:rgba(62,230,255,.5);color:#fff}
+  .dot.past{border-color:rgba(52,211,153,.4);color:var(--green)}
+
+  /* ---------- pipeline ---------- */
+  .pipe{background:linear-gradient(180deg,#0a1122,#080d1c);border:1px solid var(--line);border-radius:16px;padding:22px;overflow-x:auto}
+  .pipe-grid{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:18px;align-items:center;min-width:760px}
+  .pipe-col-title{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:8px;letter-spacing:.4px}
+  .bufs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .buf{
+    border:1px solid var(--line);border-radius:11px;padding:10px;background:#0d1730;
+    font-family:var(--mono);font-size:12px;transition:.25s;position:relative;overflow:hidden;
+  }
+  .buf small{display:block;color:var(--muted);font-size:10.5px;margin-top:3px}
+  .buf.writing{border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.08);box-shadow:0 0 18px rgba(251,191,36,.12)}
+  .buf.sending{border-color:rgba(167,139,250,.6);background:rgba(167,139,250,.08)}
+  .buf.reading{border-color:rgba(62,230,255,.7);background:rgba(62,230,255,.1);animation:bufPulse 1s infinite}
+  .buf.done{border-color:rgba(52,211,153,.55);background:rgba(52,211,153,.08)}
+  @keyframes bufPulse{0%,100%{box-shadow:0 0 0 rgba(62,230,255,0)}50%{box-shadow:0 0 22px rgba(62,230,255,.35)}}
+  .dside{display:flex;flex-direction:column;gap:10px}
+  .dbox{
+    border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:#0d1730;
+    font-family:var(--mono);font-size:12px;transition:.25s;
+  }
+  .dbox small{display:block;color:var(--muted);font-size:10.5px}
+  .dbox.hot{border-color:rgba(62,230,255,.65);box-shadow:0 0 20px rgba(62,230,255,.2);background:rgba(62,230,255,.08)}
+  .layer-track{display:flex;gap:8px;margin:22px 0 14px;flex-wrap:wrap;align-items:center;min-width:760px}
+  .pipe-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;min-width:760px;margin:22px 0 14px}
+  .pipe-bar .layer-track{margin:0;min-width:0;flex:1}
+  .pipe-ctrls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .lt-chip{
+    font-family:var(--mono);font-size:11.5px;padding:4px 10px;border-radius:7px;
+    border:1px solid var(--line);background:#0d1730;color:var(--muted);transition:.25s;
+  }
+  .lt-chip.active{color:#08101f;background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 16px rgba(62,230,255,.45)}
+  .lt-chip.done{color:var(--green);border-color:rgba(52,211,153,.4)}
+  .pipe-status{
+    font-family:var(--mono);font-size:12.5px;color:#cfe0ff;
+    border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#0b1428;
+    min-height:44px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  }
+  .led{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);flex:none;animation:pulseGlow 1.6s infinite}
+
+  /* ---------- file tree ---------- */
+  .tree{
+    font-family:var(--mono);font-size:13px;line-height:1.85;
+    background:#050914;border:1px solid #1b2a49;border-radius:12px;padding:18px 20px;overflow-x:auto;
+  }
+  .tree .dir{color:#7dd3fc}
+  .tree .file{color:#e6efff}
+  .tree .cm{color:#5e7496}
+
+  /* ---------- callouts ---------- */
+  .callout{
+    border-left:3px solid var(--cyan);background:rgba(62,230,255,.05);
+    border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0;font-size:13.5px;
+  }
+  .callout.warn{border-color:var(--amber);background:rgba(251,191,36,.06)}
+  .callout.ok{border-color:var(--green);background:rgba(52,211,153,.06)}
+  .callout b{color:#fff}
+
+  /* ---------- reveal ---------- */
+  html.js .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.8,.2,1)}
+  html.js .reveal.in{opacity:1;transform:none}
+
+  footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--muted);font-size:12.5px}
+
+  @media(max-width:640px){
+    .hero{padding:60px 0 50px}
+    .seq-ctrls{flex-wrap:wrap}
+    .seq-panel{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <div class="brand">vllm-ascend / <b>sfa_pd_rd2h</b></div>
+    <div class="nav-links">
+      <a href="#overview">定位</a>
+      <a href="#scenario">使用场景</a>
+      <a href="#topology">部署拓扑</a>
+      <a href="#roles">角色矩阵</a>
+      <a href="#lifecycle">请求生命周期</a>
+      <a href="#protocol">控制协议</a>
+      <a href="#memory">地址与切分</a>
+      <a href="#pipeline">逐层流水</a>
+      <a href="#code">代码结构</a>
+      <a href="#invariants">不变量与限制</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-kicker">SFA · PD Disaggregation · Decode Offload · MemFabric Pull</div>
+    <h1>读懂 <span class="grad">SfaRemoteD2HConnector</span><br/>远端 KV 拉取式连接器</h1>
+    <p class="lead">
+      它把 Prefill 已经算好的 KV，<b>不推、只通知</b>：由 Decode 主动通过 MemFabric 从 Prefill 的 HBM
+      把主 KV 拉进自己托管的 CPU pinned 池，把 indexer KV 拉进本地 HBM，并逐层完成“读完了”的复用握手。
+    </p>
+    <div class="hero-tags">
+      <span class="chip p">P = kv_producer</span>
+      <span class="chip d">D = kv_consumer</span>
+      <span class="chip">KVConnectorBase_V1</span>
+      <span class="chip">SupportsHMA</span>
+      <span class="chip g">supports_layerwise_buffer_reuse = True</span>
+    </div>
+
+    <div class="hero-flow">
+      <div class="node-box" style="border-color:rgba(251,191,36,.35)">
+        <small>Prefill</small>HBM KV（层缓冲）
+      </div>
+      <div class="arrow-live"></div>
+      <div class="node-box" style="border-color:rgba(62,230,255,.35)">
+        <small>Decode</small>CPU pinned pool + HBM indexer
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ================= 1. 定位 ================= -->
+  <section id="overview" class="reveal">
+    <div class="sec-head"><span class="sec-num">01</span><h2>一句话定位：它是“拉”不是“推”</h2></div>
+    <p class="sec-sub">
+      在 PD 分离部署里，Prefill 只负责算 prompt 的 KV；Decode 需要这段历史 KV 才能继续生成。
+      传统做法是 P 把 KV <i>push</i> 给 D。这个 connector 反过来：<b>P 只登记自己的源地址并发送“这层写好了”的通知，D 自己去读。</b>
+    </p>
+
+    <div class="grid-3">
+      <div class="card">
+        <span class="badge p">P 侧</span>
+        <h4 style="margin-top:10px">只暴露，不搬运</h4>
+        <p class="small muted">把本地 HBM 注册进 MemFabric，启动发送线程；每层 KV 写好后发 <code>READ_READY_BATCH</code>，等 D 回 <code>READ_DONE</code> 才允许复用该层物理 buffer。</p>
+      </div>
+      <div class="card">
+        <span class="badge d">D 侧</span>
+        <h4 style="margin-top:10px">主动拉，自己决定落点</h4>
+        <p class="small muted">D 持有自己的 block 分配（主 KV 的 CPU block、indexer 的 HBM block），收到通知后按 TP 切分、合并连续区间，直接调用 MemFabric 批量读。</p>
+      </div>
+      <div class="card">
+        <span class="badge v">为什么</span>
+        <h4 style="margin-top:10px">所有权决定方向</h4>
+        <p class="small muted">Decode 的 offload 管理器拥有 CPU 池，P 不可能知道 D 的 block 布局。让 D 拉，才能把“目的地解析”留在唯一知道答案的一侧。</p>
+      </div>
+    </div>
+
+    <h3>“RD2H” 到底指什么</h3>
+    <div class="card">
+      <p><b>R</b>emote <b>D</b>evice <b>to</b> <b>H</b>ost：远端设备（Prefill 的 NPU HBM）到本地主机内存（Decode 的 CPU 池）。但它不是单一目的地：</p>
+      <table>
+        <thead><tr><th>数据</th><th>Prefill 源</th><th>Decode 目的</th><th>原因</th></tr></thead>
+        <tbody>
+          <tr><td>主 MLA KV（K/V 两个张量）</td><td>P 的 HBM 层缓冲</td><td><code>SparseKVOffloadManager</code> 的 TP 共享 CPU pinned 池</td><td>Decode 的模型本就不在 HBM 保留完整主 KV，只保留稀疏热区</td></tr>
+          <tr><td>Indexer KV（DSA/lightning indexer）</td><td>P 的 HBM</td><td>D 每个 TP rank 的本地 HBM</td><td>top-k 选择每步都要用，必须常驻设备</td></tr>
+          <tr><td>Indexer scale（LIC8/int8 量化）</td><td>P 的 HBM</td><td>D 的 HBM，跟随 indexer</td><td>反量化参数与 indexer 同生命周期</td></tr>
+          <tr><td>fused_copy_sfa 热区（tail / dense）</td><td>P 的主 KV block</td><td>D 的每层 top-k 环形缓冲</td><td>短请求或末尾不完整 block 直接 D2D，省一次 H2D</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b>核心记忆点：</b>主 KV 去 <b>CPU</b>，indexer/scale 去 <b>HBM</b>。方向是 <b>D 拉 P</b>，控制面是 <b>ZMQ</b>，数据面是 <b>MemFabric</b>。
+    </div>
+  </section>
+
+  <!-- ================= 2. 使用场景 ================= -->
+  <section id="scenario" class="reveal">
+    <div class="sec-head"><span class="sec-num">02</span><h2>使用场景与启用方法</h2></div>
+    <p class="sec-sub">
+      适用于：<b>PD 分离 + Decode 侧稀疏 KV offload（SFA / MLA + lightning indexer）</b>。
+      Prefill 通常还会叠加 <code>AscendStoreConnector</code> 做逐层 offload，所以用 <code>MultiConnector</code> 组合。
+    </p>
+
+    <h3>启动前必须满足的约束</h3>
+    <div class="grid-2">
+      <div class="card">
+        <h4>两侧配置互斥</h4>
+        <ul class="small">
+          <li><span class="badge p">P</span> <code>sparse_kv_offload_config.enabled</code> 必须为 <b>false</b>（connector 构造时断言）。</li>
+          <li><span class="badge d">D</span> <code>sparse_kv_offload_config.enabled</code> 必须为 <b>true</b>（connector 构造时断言）。</li>
+          <li>传输后端只能是 <code>memfabric</code>；缺失 <code>transfer_backend</code> 会直接抛错。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>拓扑与端口</h4>
+        <ul class="small">
+          <li>P 的 TP 必须 <b>≥</b> D 的 TP，且能整除（<code>tp_ratio = P_tp / D_tp</code>）。</li>
+          <li>只有 D 绑定控制端口：基址 <code>kv_port + dp_rank × tp_size</code>，每个 TP rank 再 <code>+tp_rank</code>。</li>
+          <li>因此 D 侧需要预留 <code>dp_size × tp_size</code> 个连续端口。</li>
+          <li>稀疏 Decode offload 支持 DP + TP；CP / PP 组合不在支持范围。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="code-cap">Decode 侧：开启 offload + 指定 connector</div>
+<pre><code>--additional-config '{
+  "sparse_kv_offload_config": {
+    "enabled": true,
+    "topk_buffer_size": 8192,
+    "dram_size_per_dp_GB": 128,
+    "fused_op_type": "fused_copy_sfa"
+  }
+}' \
+--kv-transfer-config '{
+  "kv_connector": "SfaRemoteD2HConnector",
+  "kv_role": "kv_consumer",
+  "kv_port": 20050,
+  "kv_connector_extra_config": {
+    "transfer_backend": "memfabric",
+    "use_layerwise": true,
+    "memfabric_transfer_protocol": "sdma"
+  }
+}'</code></pre>
+
+    <div class="code-cap">Prefill 侧：MultiConnector 组合（逐层 offload + 对 D 暴露）</div>
+<pre><code>--kv-transfer-config '{
+  "kv_connector": "MultiConnector",
+  "kv_role": "kv_producer",
+  "kv_connector_extra_config": {
+    "connectors": [
+      {
+        "kv_connector": "SfaRemoteD2HConnector",
+        "kv_role": "kv_producer",
+        "kv_connector_extra_config": { "transfer_backend": "memfabric" }
+      },
+      {
+        "kv_connector": "AscendStoreConnector",
+        "kv_role": "kv_producer",
+        "kv_connector_extra_config": {
+          "backend": "memcache",
+          "use_layerwise": true,
+          "layerwise_num_shared_buffers": 3,
+          "layerwise_independent_layers": [0]
+        }
+      }
+    ]
+  }
+}'</code></pre>
+
+    <div class="callout warn">
+      <b>协议一致性：</b><code>memfabric_transfer_protocol</code> 必须两端一致。A3 系列用 <code>sdma</code>（默认）或 <code>device_rdma</code>；
+      950PR/950DT 用 <code>device_urma</code>。它不会按硬件自动探测。
+    </div>
+
+    <h3>请求是怎么被“路由”进来的</h3>
+    <p class="small">
+      Proxy 在发给 Decode 的请求里写入 <code>do_remote_prefill=true</code> 与 <code>metaserver</code> 地址；Decode 侧调度器在分配 block 后，
+      再向 metaserver 反向登记 <code>do_remote_decode=true</code> 和 D 的 ZMQ 端点，Proxy 据此把同一个请求转发给 Prefill。
+      批量请求（如一次 OpenAI completion 展开成多个子请求）用 <code>BATCH_KV_TRANSFER_PARAMS</code> 携带每个子请求的参数。
+    </p>
+  </section>
+
+  <!-- ================= 3. 部署拓扑 ================= -->
+  <section id="topology" class="reveal">
+    <div class="sec-head"><span class="sec-num">03</span><span class="mono small" style="color:var(--cyan)">LIVE</span><h2>部署拓扑：两个节点、三条通路</h2></div>
+    <p class="sec-sub">动画中，青色小点表示数据实际流向；虚线控制面由 D 发起读请求、P 回执，真正搬运由 MemFabric 完成。</p>
+
+    <div class="svg-wrap">
+      <svg viewBox="0 0 1000 410" role="img" aria-label="SFA PD RD2H topology">
+        <defs>
+          <marker id="ah-c" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#3ee6ff"/>
+          </marker>
+          <marker id="ah-v" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#a78bfa"/>
+          </marker>
+          <marker id="ah-a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#fbbf24"/>
+          </marker>
+          <linearGradient id="gP" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1a1608"/><stop offset="1" stop-color="#0e1424"/>
+          </linearGradient>
+          <linearGradient id="gD" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#081b24"/><stop offset="1" stop-color="#0e1424"/>
+          </linearGradient>
+        </defs>
+
+        <!-- metaserver -->
+        <rect x="408" y="12" width="184" height="36" rx="10" fill="#121d38" stroke="#a78bfa" stroke-opacity=".45"/>
+        <text x="500" y="35" text-anchor="middle" class="svg-title" fill="#c9b8ff">Proxy / Metaserver</text>
+        <text x="500" y="64" text-anchor="middle" class="svg-small">HTTP：只交换联系方式与 go 标志</text>
+
+        <!-- P node -->
+        <rect x="26" y="90" width="306" height="286" rx="16" fill="url(#gP)" stroke="#fbbf24" stroke-opacity=".35"/>
+        <text x="48" y="120" class="svg-title" fill="#fbbf24">Prefill 节点 · kv_producer</text>
+        <rect x="48" y="136" width="262" height="86" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="62" y="160" class="svg-label">P HBM · main MLA K/V</text>
+        <text x="62" y="180" class="svg-small">可复用层缓冲（2~4 个物理 slot）</text>
+        <rect x="62" y="190" width="48" height="18" rx="4" fill="#2b2410" stroke="#fbbf24" stroke-opacity=".4"/>
+        <rect x="118" y="190" width="48" height="18" rx="4" fill="#2b2410" stroke="#fbbf24" stroke-opacity=".4"/>
+        <rect x="174" y="190" width="48" height="18" rx="4" fill="#2b2410" stroke="#fbbf24" stroke-opacity=".4"/>
+
+        <rect x="48" y="234" width="262" height="52" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="62" y="256" class="svg-label">P HBM · indexer / LIC8 scale</text>
+        <text x="62" y="274" class="svg-small">逐层、与主 KV 一起被通知</text>
+
+        <rect x="48" y="298" width="262" height="56" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="62" y="320" class="svg-label">MembPullSendingThread</text>
+        <text x="62" y="338" class="svg-small">ZMQ DEALER · 每层 READ_READY_BATCH</text>
+
+        <!-- D node -->
+        <rect x="668" y="90" width="306" height="286" rx="16" fill="url(#gD)" stroke="#3ee6ff" stroke-opacity=".35"/>
+        <text x="690" y="120" class="svg-title" fill="#3ee6ff">Decode 节点 · kv_consumer</text>
+        <rect x="690" y="136" width="262" height="86" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="704" y="160" class="svg-label">D Host · main KV CPU pinned pool</text>
+        <text x="704" y="180" class="svg-small">SparseKVOffloadManager 所有，TP 共享</text>
+        <rect x="704" y="190" width="74" height="18" rx="4" fill="#08222b" stroke="#3ee6ff" stroke-opacity=".4"/>
+        <rect x="786" y="190" width="74" height="18" rx="4" fill="#08222b" stroke="#3ee6ff" stroke-opacity=".4"/>
+
+        <rect x="690" y="234" width="262" height="52" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="704" y="256" class="svg-label">D HBM · indexer + top-k 热缓冲</text>
+        <text x="704" y="274" class="svg-small">每 TP rank 私有</text>
+
+        <rect x="690" y="298" width="262" height="56" rx="10" fill="#0d1730" stroke="#2a3a5e"/>
+        <text x="704" y="320" class="svg-label">MembPullReadThread</text>
+        <text x="704" y="338" class="svg-small">ZMQ ROUTER · MemFabric batch read</text>
+
+        <!-- data path main -->
+        <path id="pathMain" d="M 312 178 C 430 150, 570 150, 686 178" fill="none" stroke="#3ee6ff" stroke-width="2" stroke-opacity=".75" marker-end="url(#ah-c)"/>
+        <text x="500" y="150" text-anchor="middle" class="svg-small" fill="#8fe9ff">主 KV → D 主机内存（D 发起 read）</text>
+
+        <!-- data path indexer -->
+        <path id="pathIdx" d="M 312 260 C 430 240, 570 240, 686 260" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-opacity=".7" marker-end="url(#ah-v)"/>
+        <text x="500" y="240" text-anchor="middle" class="svg-small" fill="#c9b8ff">indexer / scale → D HBM</text>
+
+        <!-- control path -->
+        <path id="pathCtl" d="M 312 330 C 430 372, 570 372, 686 330" fill="none" stroke="#fbbf24" stroke-width="1.6" stroke-opacity=".7" stroke-dasharray="6 6" marker-end="url(#ah-a)"/>
+        <text x="500" y="392" text-anchor="middle" class="svg-small" fill="#ffd77a">ZMQ 控制面：READ_READY_BATCH ⇄ READ_DONE / READ_FAILED</text>
+
+        <!-- packets -->
+        <circle r="4.5" fill="#3ee6ff" opacity=".95">
+          <animateMotion dur="3.2s" repeatCount="indefinite" begin="0s"><mpath href="#pathMain"/></animateMotion>
+        </circle>
+        <circle r="4" fill="#a78bfa" opacity=".9">
+          <animateMotion dur="3.8s" repeatCount="indefinite" begin=".7s"><mpath href="#pathIdx"/></animateMotion>
+        </circle>
+        <circle r="3.5" fill="#fbbf24" opacity=".85">
+          <animateMotion dur="2.6s" repeatCount="indefinite" begin=".2s"><mpath href="#pathCtl"/></animateMotion>
+        </circle>
+
+        <text x="500" y="105" text-anchor="middle" class="svg-small">只有 D 绑定 TCP 端口；P 主动 connect</text>
+      </svg>
+    </div>
+
+    <div class="callout">
+      <b>两个容易混淆的点：</b>
+      ① “RD2H”里的 H 是 <b>Decode 的主机内存</b>，不是 Prefill 的；② indexer 虽然也走同一条 MemFabric 通路，但落点是 Decode 的 <b>HBM</b>，不是 CPU。
+    </div>
+  </section>
+
+  <!-- ================= 4. 角色矩阵 ================= -->
+  <section id="roles" class="reveal">
+    <div class="sec-head"><span class="sec-num">04</span><h2>代码结构：一个门面，四种组合</h2></div>
+    <p class="sec-sub">
+      <code>SfaRemoteD2HConnector</code> 本身几乎不写业务逻辑，它按 <b>进程角色（SCHEDULER / WORKER）</b> × <b>KV 角色（producer / consumer）</b>
+      分派到四个实现类。理解这张矩阵，就理解了整个目录。
+    </p>
+
+    <div class="matrix">
+      <div></div>
+      <div class="h">kv_producer（Prefill）</div>
+      <div class="h">kv_consumer（Decode）</div>
+
+      <div class="h">SCHEDULER</div>
+      <div class="mcell">
+        <b>SFAPDRD2HProducerScheduler</b>
+        <span>记录本地 block；每步生成 <code>SfaPDProducerMetadata</code>，算 token 区间与 <code>chunk_finish</code>。</span>
+      </div>
+      <div class="mcell">
+        <b>SFAPDRD2HScheduler</b>
+        <span>把 prompt 声明为外部 token；登记 main/indexer 目的地；分配 copy-sfa slot；HTTP 通知 metaserver。</span>
+      </div>
+
+      <div class="h">WORKER</div>
+      <div class="mcell">
+        <b>SFAPDRD2HProducerWorker</b>
+        <span>MemFabric 注册 HBM；层钩子里记录事件并入队；复用闸门等待 D 读完。</span>
+      </div>
+      <div class="mcell">
+        <b>SFAPDRD2HConsumerWorker</b>
+        <span>绑定 offload manager 的 CPU 池；启动读线程；聚合 TP 完成状态并回报调度器。</span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h4 style="margin-top:0">门面里的分派逻辑</h4>
+<pre><code>if role == KVConnectorRole.SCHEDULER:
+    if self.is_producer:
+        self.connector_scheduler = SFAPDRD2HProducerScheduler(
+            vllm_config, kv_cache_config, str(self.engine_id))
+    else:
+        self.connector_scheduler = SFAPDRD2HScheduler(
+            vllm_config, self.use_layerwise, kv_cache_config)
+    self.connector_worker = None
+else:
+    self.connector_scheduler = None
+    if self.is_producer:
+        self.connector_worker = SFAPDRD2HProducerWorker(
+            vllm_config, kv_cache_config, str(self.engine_id))
+    else:
+        self.connector_worker = SFAPDRD2HConsumerWorker(
+            vllm_config, self.use_layerwise, kv_cache_config)</code></pre>
+    </div>
+
+    <h3>文件职责</h3>
+    <div class="tree">
+<span class="dir">kv_p2p/sfa_pd_rd2h/</span>
+├── <span class="file">connector.py</span>      <span class="cm"># 门面：角色分派 + vLLM KVConnector 接口 + 层钩子</span>
+├── <span class="file">scheduler.py</span>      <span class="cm"># P：任务编排 / D：目的地登记 + metaserver 会合</span>
+├── <span class="file">worker.py</span>         <span class="cm"># P：注册 HBM + 层钩子 / D：绑定 CPU 池 + 读线程生命周期</span>
+├── <span class="file">send_thread.py</span>    <span class="cm"># P 发送线程：MF_META、READ_READY_BATCH、READ_DONE 处理、复用闸门</span>
+├── <span class="file">read_thread.py</span>    <span class="cm"># D 读线程：ZMQ ROUTER、布局校验、描述符构建、MemFabric 读</span>
+├── <span class="file">protocol.py</span>       <span class="cm"># 消息常量 + Metadata dataclass + group id 推断</span>
+└── <span class="file">__init__.py</span>       <span class="cm"># get_prebound_copy_sfa_slots()：给 model runner 提前拿 top-k 行号</span>
+    </div>
+
+    <div class="callout">
+      <b>设计取舍：</b>connector 门面只做“转发 + 生命周期”，真正的并发都在两个后台线程里。
+      Scheduler 进程与 Worker 进程通过 vLLM 的 <code>KVConnectorMetadata</code> 传递“本步要传什么”，不共享内存。
+    </div>
+  </section>
+
+  <!-- ================= 5. 生命周期 ================= -->
+  <section id="lifecycle" class="reveal">
+    <div class="sec-head"><span class="sec-num">05</span><h2>请求生命周期：从 HTTP 到 READ_DONE</h2></div>
+    <p class="sec-sub">点击播放，观察一次请求从 Proxy 进入 Decode，再回到 Prefill 取数、逐层拉取、最终放行 decode 的全过程。</p>
+
+    <div class="seq-shell">
+      <div class="seq-stage" id="seqStage">
+        <div class="lane-head p" style="left:22%">Prefill · producer</div>
+        <div class="lane-head m" style="left:50%">Proxy / Metaserver</div>
+        <div class="lane-head d" style="left:78%">Decode · consumer</div>
+        <div class="lifeline p" style="left:22%"></div>
+        <div class="lifeline m" style="left:50%;top:70px"></div>
+        <div class="lifeline d" style="left:78%"></div>
+      </div>
+
+      <div class="seq-panel">
+        <div>
+          <h4 id="seqTitle">准备就绪</h4>
+          <p id="seqDetail">点击“播放”开始；也可以直接点击下方步骤号跳转。</p>
+        </div>
+        <div class="seq-ctrls">
+          <button class="primary" id="seqPlay">播放</button>
+          <button id="seqPrev">上一步</button>
+          <button id="seqNext">下一步</button>
+          <button id="seqReset">重置</button>
+          <span class="mono small muted" id="seqCounter">0 / 11</span>
+        </div>
+      </div>
+      <div class="dots" id="seqDots"></div>
+    </div>
+
+    <div class="grid-2" style="margin-top:18px">
+      <div class="card">
+        <h4 style="margin-top:0">Decode 侧的关键三件事</h4>
+        <ol class="small">
+          <li><b>声明外部 token：</b><code>get_num_new_matched_tokens()</code> 返回 prompt 长度与异步标志，让 vLLM 为整段 prompt 分配 block。</li>
+          <li><b>保留目的地：</b><code>update_state_after_alloc()</code> 把 main/indexer 两组的 block ids 存在本地，<b>不发给 P</b>。</li>
+          <li><b>反向登记：</b>POST metaserver，只带 D 的 host/port/TP 尺寸与 <code>do_remote_decode=true</code>。</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">Prefill 侧的关键三件事</h4>
+        <ol class="small">
+          <li><b>记录源 block：</b>P 分配自己的 HBM block，只关心“我要暴露哪些源地址”。</li>
+          <li><b>逐层通知：</b>每层 KV 写完（scatter 时或层末）把源 block 列表发给 D。</li>
+          <li><b>等回执再复用：</b>物理 buffer 的复用被 <code>READ_DONE</code> 闸门卡住，避免 D 还在读就被覆盖。</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="callout ok">
+      <b>为什么 D 不把 block id 发给 P？</b>这是从 push 模型切到 pull 模型后刻意删掉的旧逻辑。P 若拿到 D 的目的地，就会退化成“P 决定写哪里”，
+      与 D 的 CPU 池所有权冲突；而 D 只需要按 <code>req_id</code> 在自己本地查表即可。
+    </div>
+  </section>
+
+  <!-- ================= 6. 控制协议 ================= -->
+  <section id="protocol" class="reveal">
+    <div class="sec-head"><span class="sec-num">06</span><h2>控制协议：四种消息，一条连接</h2></div>
+    <p class="sec-sub">
+      控制面用 ZMQ：D 每个 TP rank 起一个 <code>ROUTER</code>，P 对每个 D 端点维护一个 <code>DEALER</code>。
+      消息用 <code>msgspec.msgpack</code> 编码，首元素是消息类型。
+    </p>
+
+    <table>
+      <thead><tr><th>消息</th><th>方向</th><th>载荷要点</th><th>作用</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>MF_META</code></td><td>P → D（每连接一次）</td>
+          <td>P session id、每层 <code>base_addrs / block_len / block_size_scale / group_idx / main_tensor_count / has_indexer</code>、协议版本、PP rank/size</td>
+          <td>把 P 的源地址布局告诉 D；D 校验后回 <code>MF_META_ACK</code>（PP=1 的旧路径可回裸 <code>ACK</code>）</td>
+        </tr>
+        <tr>
+          <td><code>READ_READY_BATCH</code></td><td>P → D（每层）</td>
+          <td>层号、层名、<code>read_reqs=[(ext_id, main_ids, indexer_ids, main_start, indexer_start)]</code>、<code>done_ext_ids</code>、<code>group_member_idx</code>、<code>tp_ratio</code></td>
+          <td>“这一层写好了，可以来读”；同一 D 端点的多个请求合并成一条</td>
+        </tr>
+        <tr>
+          <td><code>READ_DONE</code></td><td>D → P</td>
+          <td>层号</td>
+          <td>数据已落盘，P 可以释放该层的复用闸门</td>
+        </tr>
+        <tr>
+          <td><code>READ_FAILED</code></td><td>D → P</td>
+          <td>层号、错误字符串</td>
+          <td>P 记录到对应物理 slot，等待方抛错；D 同时把这些 block 标为无效</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>先把“源地址表”交出去：MF_META</h3>
+    <p class="small">
+      每个 D 端点第一次收到数据前，P 会发一次 <code>MF_META</code> 并阻塞等待回执。它携带的是 <b>P 的 MemFabric session id</b> 与每层张量布局：
+      主 KV 固定 2 个张量（K、V），其后可选 indexer 张量与 LIC8 scale 张量。
+    </p>
+
+<pre><code># send_thread.py：首次连接时的握手
+dealer.send(encoder.encode(
+    (MF_META, self._state.p_session, encoder.encode(p_meta_dict),
+     SFAPD_PROTOCOL_VERSION, self._state.producer_pp_rank,
+     self._state.producer_pp_size)))</code></pre>
+
+    <h3>每层一条：READ_READY_BATCH</h3>
+<pre><code>dealer.send(encoder.encode(
+    (READ_READY_BATCH, layer_idx, layer_name,
+     read_reqs, done_ext_ids, group_member_idx, tp_ratio)))</code></pre>
+
+    <p class="small">
+      P 会按 <code>(remote_host, remote_port)</code> 分组，把同一 D 端点的多个请求塞进同一条消息，减少 ZMQ 往返。
+      <code>done_ext_ids</code> 只在“最后一层 + 本 chunk 已算完”时出现，表示这个 chunk 的所有贡献者都可以报告完成了。
+    </p>
+
+    <div class="callout">
+      <b>小细节：</b>P 侧 <code>update_decoder_info()</code> 在 MemFabric 模式下直接返回原 meta，<b>不发 GET_META</b>。
+      因为 pull 模式下 P 根本不需要 D 的地址；省掉这轮请求可以避免占满 D 的 ROUTER 队列。
+    </div>
+  </section>
+
+  <!-- ================= 7. 地址与切分 ================= -->
+  <section id="memory" class="reveal">
+    <div class="sec-head"><span class="sec-num">07</span><h2>地址映射与 TP 切分：D 如何算出读哪里</h2></div>
+    <p class="sec-sub">
+      描述符是三个等长数组：<code>local_ptrs</code>（D 地址）、<code>peer_ptrs</code>（P 地址）、<code>lengths</code>（字节数）。
+      构建过程就是一次“逻辑 block → 物理字节区间”的翻译。
+    </p>
+
+    <h3>Block 字节数怎么来</h3>
+    <div class="card">
+      <p class="small" style="margin-top:0">注册时对每个张量计算：</p>
+<pre><code>block_len        = tensor.element_size() * prod(tensor.shape[1:])
+block_size_scale = tensor.shape[0] // num_blocks
+外部 block 字节数 = block_len * block_size_scale</code></pre>
+      <p class="small">
+        之所以有 <code>scale</code>，是为了兼容“外部 block 大小是 kernel block 整数倍”的布局：
+        一个 vLLM block 可能对应多个 kernel block 的存储。D 在读之前会用这个字节数与自己的池逐层比对，
+        <b>主 KV、indexer、scale 任一项不匹配都会直接报错</b>，而不是悄悄写坏数据。
+      </p>
+      <p class="small mono" style="color:#9fb6dd">
+        P 地址 = p_base + p_block_id × (block_len × scale)　　D 地址 = d_base + d_block_id × 同尺寸
+      </p>
+    </div>
+
+    <h3>主 KV 的 TP 切分：每个 rank 只拉自己那段</h3>
+    <p class="small">
+      D 的 CPU 池是 TP 共享的，但每个 TP rank 负责把主 KV 的一段拉进来。切分函数还会按 chunk 的全局起始 block 做旋转，
+      避免连续的小 chunk 总是落在 TP0：
+    </p>
+<pre><code>def _tp_block_range(num_blocks, tp_rank, tp_size, start_block=0):
+    # 旋转首个 owner：连续小 chunk 不会全压到 TP0
+    logical_rank = (tp_rank - start_block % tp_size) % tp_size
+    blocks_per_rank, remainder = divmod(num_blocks, tp_size)
+    start = logical_rank * blocks_per_rank + min(logical_rank, remainder)
+    count = blocks_per_rank + int(logical_rank &lt; remainder)
+    return start, start + count</code></pre>
+
+    <h3>不等 TP：一个 D rank 由多个 P rank 共同喂</h3>
+    <p class="small">
+      当 P_tp &gt; D_tp 时，<code>tp_ratio = P_tp // D_tp</code>。一组 <code>ratio</code> 个 P rank 映射到同一个 D rank：
+    </p>
+    <ul class="small">
+      <li><b>主 KV：</b>只由组内第 0 个贡献者（<code>group_member_idx == 0</code>）拉取，避免重复。</li>
+      <li><b>Indexer：</b>每个 D rank 都需要完整一份，所以把 indexer block 再按 <code>ratio</code> 细分给各贡献者。</li>
+      <li><b>完成判定：</b>D 端累计 <code>pp_size × ratio</code> 个贡献者的末层到达，才算请求完成。</li>
+    </ul>
+
+<pre><code># worker.py：P rank 映射到 D TP rank
+tp_ratio = prefill_tp_size // decode_tp_size
+remote_tp_rank = prefill_tp_rank // tp_ratio
+remote_port = base_port + remote_tp_rank   # D 每 rank 一个端口</code></pre>
+
+    <div class="callout warn">
+      <b>端口不是随便加的：</b>D 的基址用 <b>全局</b> <code>data_parallel_rank</code>，不能用 <code>data_parallel_rank_local</code>。
+      否则单机多 DP 引擎的 local rank 都从 0 开始，会全部撞在 <code>kv_port + 0</code>。
+    </div>
+
+    <h3>描述符合并：把碎片区间拼成一次批量读</h3>
+    <p class="small">
+      block 在物理上不一定连续。<code>_coalesce_desc()</code> 会同时检查 P 与 D 两侧地址是否连续，
+      把能接上的区间合并；两边的 block 顺序一致时，一整段 prompt 只需一个描述符。
+    </p>
+<pre><code>ret = self.engine.batch_transfer_sync_read(
+    p_session, all_local_ptrs, all_peer_ptrs, all_lengths)
+if ret != 0:
+    raise RuntimeError(f"memfabric batch read failed, ret={ret}")</code></pre>
+  </section>
+
+  <!-- ================= 8. 逐层流水 ================= -->
+  <section id="pipeline" class="reveal">
+    <div class="sec-head"><span class="sec-num">08</span><h2>逐层流水与复用闸门</h2></div>
+    <p class="sec-sub">
+      SFA 在 Prefill 侧是逐层计算的，KV buffer 会被后续层覆盖。因此连接器把“发送”和“允许覆盖”拆成两件事：
+      发送只代表数据可见，<code>READ_DONE</code> 才代表 D 读完。下方动画支持暂停与<b>单步</b>（每次推进一个阶段）。
+    </p>
+
+    <div class="pipe">
+      <div class="pipe-grid">
+        <div>
+          <div class="pipe-col-title">P HBM 物理缓冲</div>
+          <div class="bufs">
+            <div class="buf" id="buf0"><span>Buf A</span><small>L0 独立</small></div>
+            <div class="buf" id="buf1"><span>Buf B</span><small>共享</small></div>
+            <div class="buf" id="buf2"><span>Buf C</span><small>共享</small></div>
+            <div class="buf" id="buf3"><span>Buf D</span><small>共享</small></div>
+          </div>
+        </div>
+        <div>
+          <div class="pipe-col-title">Decode 落点</div>
+          <div class="dside">
+            <div class="dbox" id="dCpu">main KV → CPU pinned pool<small>每 TP rank 拉一段</small></div>
+            <div class="dbox" id="dHbm">indexer → 本地 HBM<small>按 rank 私有</small></div>
+          </div>
+        </div>
+        <div>
+          <div class="pipe-col-title">闸门状态</div>
+          <div class="dbox" id="gateBox">storage slot 事件<small id="gateText">初始为 set（可复用）</small></div>
+        </div>
+      </div>
+
+      <div class="pipe-bar">
+        <div class="layer-track" id="layerTrack"></div>
+        <div class="pipe-ctrls">
+          <button class="primary" id="pipePlay">暂停</button>
+          <button id="pipeNext">单步</button>
+          <button id="pipeReset">重置</button>
+          <span class="mono small muted" id="pipeCounter">L0 · 阶段 1/4</span>
+        </div>
+      </div>
+      <div class="pipe-status"><span class="led"></span><span id="pipeStatus">等待开始…</span></div>
+    </div>
+
+    <div class="grid-2" style="margin-top:18px">
+      <div class="card">
+        <h4 style="margin-top:0">P 侧：两个钩子，一条队列</h4>
+        <ul class="small">
+          <li><code>on_kv_cache_written()</code>：scatter 完成即可提前派发，让 D 的拉取与后续 attention 重叠。</li>
+          <li><code>save_kv_layer()</code>：层末兜底；若该层已在 scatter 时派发，则跳过（<code>_pd_dispatched_layers</code>）。</li>
+          <li>两者都会 <code>record_p_save_event()</code> 记录 NPU event，发送线程在真正发消息前 <code>synchronize()</code>。</li>
+          <li>任务入 <code>send_queue</code>，由 <code>MembPullSendingThread</code> 串行发送并按端点合并。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">复用闸门按“物理 storage slot”计数</h4>
+        <p class="small">
+          多个逻辑层可能共享同一块 NPU 地址，所以不能只用层号记账。Worker 在注册时从地址反推
+          <code>layer_storage_slots</code>，主 KV 与 indexer 分开成 slot：
+        </p>
+<pre><code># 每个 slot 一个 Event，初始 set（首个占用者不阻塞）
+storage_send_done_events[slot].set()
+
+# 新一层写入前先 close 闸门
+mark_layer_pending(layer_idx)
+
+# READ_DONE 到达后才重新 set
+_signal_layer_done(layer_idx)</code></pre>
+      </div>
+    </div>
+
+    <div class="callout">
+      <b>为什么用“物理 slot”而不是“层”：</b>Layerwise offload 会把 N 个逻辑层映射到 B 个物理 buffer。
+      L5 和 L9 可能写到同一块地址。若按层记账，L9 会以为 L5 的读已经结束；按 slot 记账才能覆盖“环形复用”的最后一圈。
+    </div>
+  </section>
+
+  <!-- ================= 9. 代码走读 ================= -->
+  <section id="code" class="reveal">
+    <div class="sec-head"><span class="sec-num">09</span><h2>代码走读：按调用时机索引</h2></div>
+    <p class="sec-sub">下表按 vLLM 的调用顺序排列，可以当作阅读源码的地图。</p>
+
+    <table>
+      <thead><tr><th>时机</th><th><span class="badge p">Prefill</span></th><th><span class="badge d">Decode</span></th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>get_num_new_matched_tokens</code></td>
+          <td>返回 <code>(0, False)</code>：P 不从别处取 KV。</td>
+          <td>若 <code>do_remote_prefill</code>，返回 prompt 长度与 <code>count &gt; 0</code>（异步）。</td>
+        </tr>
+        <tr>
+          <td><code>update_state_after_alloc</code></td>
+          <td>保存 <code>local_block_ids</code>；处理批量请求的子参数。</td>
+          <td>按 group 拆出 main/indexer block ids；分配 copy-sfa 行；POST metaserver。</td>
+        </tr>
+        <tr>
+          <td><code>build_connector_meta</code></td>
+          <td>每步计算 <code>local_transed_tokens</code> / <code>local_computed_tokens</code> / <code>chunk_finish</code>。</td>
+          <td>把尚未投递过的请求连同目的地写进 meta，投递一次后清空。</td>
+        </tr>
+        <tr>
+          <td><code>bind_connector_metadata</code></td>
+          <td>重置 <code>current_layer</code> 与已派发集合；按 TP 映射修正 <code>remote_port</code>。</td>
+          <td>无操作（门面只对 P 转发）。</td>
+        </tr>
+        <tr>
+          <td><code>register_kv_caches</code></td>
+          <td>构建 <code>LayerMetadata</code>；MemFabric 注册 HBM；启动发送线程。</td>
+          <td>读取 offload manager 的 CPU 池/GVA；构建 indexer 元数据；启动读线程。</td>
+        </tr>
+        <tr>
+          <td><code>save_kv_layer</code> / <code>on_kv_cache_written</code></td>
+          <td>记录 event、标记 pending、生成 <code>SendTask</code> 入队。</td>
+          <td>显式 no-op：D 的加载由读线程驱动。</td>
+        </tr>
+        <tr>
+          <td><code>wait_for_layer_load</code></td>
+          <td>按物理 slot 等待 <code>READ_DONE</code>，失败则抛错。</td>
+          <td>直接返回。</td>
+        </tr>
+        <tr>
+          <td><code>get_finished</code></td>
+          <td>返回空集合。</td>
+          <td>读线程取 done/failed → 跨 TP <code>all_gather_object</code> 求交 → 映射回内部 id。</td>
+        </tr>
+        <tr>
+          <td><code>request_finished</code></td>
+          <td>清理该请求的发送跟踪。</td>
+          <td>清理映射与 copy-sfa slot；取消未完成的 metaserver 请求。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Decode 完成判定：为什么要跨 TP 求交</h3>
+    <p class="small">
+      主 KV 被切给多个 D TP rank，任何一个 rank 没读完，请求都不能算完成。因此每个 rank 维护自己的终态集合，
+      通过 CPU group 做 <code>all_gather_object</code>，取<b>交集</b>才是“所有 rank 都完成”；失败则取<b>并集</b>，
+      并把对应 main/indexer block 记为无效，交给 vLLM 重新计算。
+    </p>
+<pre><code>tp_status = self._gather_tp_read_status(set(self._terminal_ext_ids), local_failed)
+finished_on_all = set.intersection(*(terminal for terminal, _ in tp_status))
+failed_on_any = set().union(*(failed for _, failed in tp_status))</code></pre>
+
+    <h3>Copy-SFA 的两个小优化</h3>
+    <div class="grid-2">
+      <div class="card">
+        <h4 style="margin-top:0">Tail：只补最后一个不完整 block</h4>
+        <p class="small">
+          prompt 末尾不足一个 block 时，读线程额外把这段 D2D 到该请求独占的 top-k 环形槽（两个 block 的环，按 block 号奇偶选偏移），
+          decode 首步不必再从 CPU 池 H2D。
+        </p>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">Dense：短 prompt 整体放进热区</h4>
+        <p class="small">
+          短请求直接把整个 prompt 的 block 复制到 top-k 行的 hot region，使 decode 可以在“非 offload”状态直接跑完，
+          完全省掉首次 H2D。两者的行号通过 <code>get_prebound_copy_sfa_slots()</code> 提前暴露给 model runner。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 10. 不变量与限制 ================= -->
+  <section id="invariants" class="reveal">
+    <div class="sec-head"><span class="sec-num">10</span><h2>正确性不变量、失败路径与限制</h2></div>
+
+    <h3>四条必须成立的不变量</h3>
+    <div class="grid-2">
+      <div class="card">
+        <h4 style="margin-top:0">1. 布局三方一致</h4>
+        <p class="small">P 元数据、D 的 CPU 池、D 的 indexer/scale 张量，三者的 block 字节数必须相等；不一致在首次读之前就抛错。</p>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">2. 读毕才可覆写</h4>
+        <p class="small">物理 storage slot 的 Event 在发送前 clear，在 READ_DONE/READ_FAILED 后 set；首个占用者因初始为 set 而不阻塞。</p>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">3. 完成要全票通过</h4>
+        <p class="small">D 侧所有 TP rank 终态取交集；P 侧所有 PP × TP 贡献者到齐（<code>pp_size × ratio</code>）才算 chunk 完成。</p>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">4. chunk 边界按“已算 token”切</h4>
+        <p class="small">
+          <code>start_block = max(remote_cache_tokens, local_transed_tokens) / block_size</code>；
+          <code>end_block</code> 在 chunk 未完成时向下取整，完成时向上取整，保证不遗漏末尾半块。
+        </p>
+      </div>
+    </div>
+
+    <h3>失败时发生什么</h3>
+    <ul class="small">
+      <li><b>D 读失败：</b>回 <code>READ_FAILED</code>，P 把错误记到该层所有 slot，等待方抛 <code>RuntimeError</code>；D 把涉及的 block 标记为无效。</li>
+      <li><b>P 发送线程异常：</b>清理所有 pending 层，置错误并释放闸门，避免死等。</li>
+      <li><b>metaserver 不可达：</b>最多重试 3 次，失败后 1 秒定时器再投递；请求结束时取消 future/timer。</li>
+      <li><b>done 早于 request_map：</b>外部 id 先挂在 <code>_pending_done</code>，后续每步重试映射，避免信号丢失。</li>
+    </ul>
+
+    <h3>已知限制</h3>
+    <div class="callout warn">
+      <ul style="margin:0">
+        <li>传输后端只支持 <b>MemFabric</b>（pull 模式没有 push 写路径）。</li>
+        <li>Sparse Decode Offload 支持 DP + TP；<b>CP / PP 不在支持范围</b>（协议本身对 PP 有贡献者计数）。</li>
+        <li>Decode 必须开启 <code>sparse_kv_offload_config</code>，Prefill 必须关闭。</li>
+        <li><code>fused_copy_sfa</code> 额外要求 <code>index_topk=2048</code>、block size 128、<code>topk_buffer_size</code> 为 256 的倍数等。</li>
+        <li>P 的 TP 必须 ≥ 且整除 D 的 TP。</li>
+      </ul>
+    </div>
+
+    <h3>一页总结</h3>
+    <div class="card">
+      <p style="margin:0">
+        <span class="badge p">P</span> 注册 HBM → 每层写完后发 <code>READ_READY_BATCH</code> → 等 <code>READ_DONE</code> 再复用物理 slot；
+        <br/>
+        <span class="badge d">D</span> 分配 main CPU + indexer HBM → 保留 block ids → 收到通知后按 TP 切分、合并描述符、
+        <code>batch_transfer_sync_read</code> → 聚合所有 TP/贡献者 → 告诉调度器“KV 就绪”。
+        <br/>
+        <span class="badge v">本质</span> 用控制面消息把“数据可见性”和“数据搬运”解耦，让拥有目的地的 Decode 掌握拉取节奏。
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div>基于当前工作区源码整理：<span class="mono">connector.py · scheduler.py · worker.py · send_thread.py · read_thread.py · protocol.py</span></div>
+    <div style="margin-top:6px">关联：<span class="mono">sparse_kv_offload_manager.py · memfabric_transfer_engine.py · copy_sfa_topk_slots.py · KVConnectorFactory 注册</span></div>
+  </footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- 1. 代码高亮 ---------------- */
+  var KEYWORDS = {
+    def:1, class:1, return:1, if:1, else:1, elif:1, for:1, while:1, in:1, not:1,
+    and:1, or:1, import:1, from:1, as:1, with:1, try:1, except:1, finally:1,
+    raise:1, assert:1, self:1, lambda:1, yield:1, await:1, async:1, pass:1,
+    continue:1, break:1, None:1, True:1, False:1, is:1
+  };
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function highlight() {
+    var blocks = document.querySelectorAll("pre code");
+    for (var i = 0; i < blocks.length; i++) {
+      var el = blocks[i];
+      var raw = el.textContent;
+      var re = /(#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)/g;
+      var out = "", last = 0, m;
+      while ((m = re.exec(raw)) !== null) {
+        out += esc(raw.slice(last, m.index));
+        if (m[1]) out += '<span class="c-com">' + esc(m[1]) + "</span>";
+        else if (m[2]) out += '<span class="c-str">' + esc(m[2]) + "</span>";
+        else if (m[3]) out += '<span class="c-num">' + esc(m[3]) + "</span>";
+        else if (m[4]) {
+          out += KEYWORDS[m[4]] ? '<span class="c-kw">' + m[4] + "</span>" : esc(m[4]);
+        }
+        last = re.lastIndex;
+      }
+      out += esc(raw.slice(last));
+      el.innerHTML = out;
+    }
+  }
+
+  /* ---------------- 2. 滚动显现 & 导航高亮 ---------------- */
+  function reveals() {
+    var items = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) {
+      for (var i = 0; i < items.length; i++) items[i].classList.add("in");
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) e.target.classList.add("in");
+      });
+    }, { threshold: 0.08 });
+    items.forEach(function (el) { io.observe(el); });
+  }
+  function navSpy() {
+    var links = document.querySelectorAll(".nav-links a");
+    var sections = [];
+    links.forEach(function (a) {
+      var id = a.getAttribute("href").slice(1);
+      var sec = document.getElementById(id);
+      if (sec) sections.push({ link: a, sec: sec });
+    });
+    if (!("IntersectionObserver" in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        sections.forEach(function (s) { s.link.classList.toggle("on", s.sec === e.target); });
+      });
+    }, { rootMargin: "-30% 0px -60% 0px" });
+    sections.forEach(function (s) { io.observe(s.sec); });
+  }
+
+  /* ---------------- 3. 生命周期序列动画 ---------------- */
+  var STEPS = [
+    { from: "m", to: "d", kind: "control", tag: "HTTP",
+      title: "Prompt 请求进入 Decode",
+      detail: "Proxy 携带 do_remote_prefill=true 与 metaserver 地址。Decode 决定从远端 Prefill 拉取整段 prompt KV。" },
+    { from: "d", to: "d", kind: "compute", tag: "SCHED",
+      title: "声明外部 token",
+      detail: "get_num_new_matched_tokens() 返回 prompt 长度与异步标志；vLLM 据此为 main/indexer 两个 group 分配 block。" },
+    { from: "d", to: "m", kind: "control", tag: "HTTP",
+      title: "向 metaserver 反向登记",
+      detail: "update_state_after_alloc() 只上报 D 的 host/port/TP 尺寸与 do_remote_decode=true。D 的 block ids 留在本地。" },
+    { from: "m", to: "p", kind: "control", tag: "HTTP",
+      title: "请求转发到 Prefill",
+      detail: "Proxy 把同一请求发给 P，附带 do_remote_decode=true 与 D 的端点。P 开始正常 prefill 计算。" },
+    { from: "p", to: "p", kind: "compute", tag: "SCHED",
+      title: "记录本地源 block",
+      detail: "P 保存 local_block_ids；build_connector_meta() 每步根据已算 token 推导区间与 chunk_finish，生成发送任务。" },
+    { from: "p", to: "p", kind: "compute", tag: "WORKER",
+      title: "端口映射与写事件",
+      detail: "bind_connector_metadata() 重置层游标，把 remote_port 调整为本 rank 对应的 D TP 端口，并计算 tp_ratio / group_member_idx。" },
+    { from: "p", to: "d", kind: "control", tag: "ZMQ",
+      title: "MF_META 握手（仅首次）",
+      detail: "P 发送 MemFabric session id 与每层基址、block 字节、indexer/scale 信息；D 校验层名、协议版本与 PP 拓扑后回 ACK。" },
+    { from: "p", to: "d", kind: "control", tag: "ZMQ",
+      title: "逐层 READ_READY_BATCH",
+      detail: "每层写好后发送：层号、源 block 列表、起始 block、done 列表、贡献者编号与 tp_ratio。同一 D 端点的请求合并为一条。" },
+    { from: "d", to: "d", kind: "data", tag: "MEMFABRIC",
+      title: "解析目的地并批量读",
+      detail: "D 按 req_id 查目的地，按 TP 切分主 KV，按 ratio 细分 indexer，合并连续区间后调用 batch_transfer_sync_read() 直接读 P HBM。" },
+    { from: "d", to: "p", kind: "control", tag: "ZMQ",
+      title: "回执 READ_DONE",
+      detail: "读取成功回 READ_DONE（失败回 READ_FAILED + 错误串）。P 收到后重新打开该物理 storage slot 的复用闸门。" },
+    { from: "d", to: "d", kind: "compute", tag: "FINISH",
+      title: "聚合完成并放行",
+      detail: "所有 TP rank 与所有贡献者末层到达后，get_finished() 把外部 id 映射回内部 id，调度器认为 KV 就绪，开始 decode。" }
+  ];
+
+  var LANE_X = { p: 22, m: 50, d: 78 };
+  var TOP = 100, ROW = 62, HEAD_TOP = 34;
+
+  function initSeq() {
+    var stage = document.getElementById("seqStage");
+    if (!stage) return;
+    stage.style.height = (TOP + STEPS.length * ROW + 24) + "px";
+
+    /* 行分隔线 */
+    for (var r = 0; r < STEPS.length; r++) {
+      var line = document.createElement("div");
+      line.className = "rowline";
+      line.style.top = (TOP + r * ROW + 15) + "px";
+      stage.appendChild(line);
+    }
+
+    var pills = [];
+    STEPS.forEach(function (s, i) {
+      var el = document.createElement("div");
+      el.className = "msg pending " + s.kind;
+      el.innerHTML = '<span class="tag">' + s.tag + "</span><span>" + s.title + "</span>";
+      el.style.top = (s.from === "m" ? HEAD_TOP : TOP + i * ROW) + "px";
+      el.style.left = "calc(" + LANE_X[s.from] + "% - 96px)";
+      stage.appendChild(el);
+      pills.push(el);
+    });
+
+    var titleEl = document.getElementById("seqTitle");
+    var detailEl = document.getElementById("seqDetail");
+    var counterEl = document.getElementById("seqCounter");
+    var dotsEl = document.getElementById("seqDots");
+    var playBtn = document.getElementById("seqPlay");
+
+    var cur = -1, timer = null;
+
+    STEPS.forEach(function (s, i) {
+      var b = document.createElement("button");
+      b.className = "dot";
+      b.textContent = String(i + 1);
+      b.addEventListener("click", function () {
+        stop();
+        cur = -1;
+        setStep(i, true);
+      });
+      dotsEl.appendChild(b);
+    });
+
+    function place(el, lane, rowTop) {
+      el.style.left = "calc(" + LANE_X[lane] + "% - 96px)";
+      el.style.top = rowTop + "px";
+    }
+
+    function setStep(i, instant) {
+      if (i < 0) i = 0;
+      if (i >= STEPS.length) i = STEPS.length - 1;
+      for (var j = 0; j < pills.length; j++) {
+        var el = pills[j];
+        el.classList.remove("active", "done", "pending");
+        if (j < i) {
+          el.classList.add("done");
+          place(el, STEPS[j].to, STEPS[j].to === "m" ? HEAD_TOP : TOP + j * ROW);
+        } else if (j === i) {
+          el.classList.add("active");
+          place(el, STEPS[j].to, STEPS[j].to === "m" ? HEAD_TOP : TOP + j * ROW);
+        } else {
+          el.classList.add("pending");
+          place(el, STEPS[j].from, STEPS[j].from === "m" ? HEAD_TOP : TOP + j * ROW);
+        }
+      }
+      cur = i;
+      var s = STEPS[i];
+      titleEl.textContent = s.title;
+      detailEl.textContent = s.detail;
+      counterEl.textContent = (i + 1) + " / " + STEPS.length;
+      var dots = dotsEl.querySelectorAll(".dot");
+      for (var k = 0; k < dots.length; k++) {
+        dots[k].classList.toggle("on", k === i);
+        dots[k].classList.toggle("past", k < i);
+      }
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      playBtn.textContent = "播放";
+    }
+    function play() {
+      if (timer) return;
+      if (cur >= STEPS.length - 1) setStep(0, true);
+      else setStep(cur + 1, true);
+      timer = setInterval(function () {
+        if (cur >= STEPS.length - 1) { stop(); return; }
+        setStep(cur + 1);
+      }, 1900);
+      playBtn.textContent = "暂停";
+    }
+
+    playBtn.addEventListener("click", function () {
+      if (timer) stop(); else play();
+    });
+    document.getElementById("seqPrev").addEventListener("click", function () {
+      stop(); setStep(cur - 1);
+    });
+    document.getElementById("seqNext").addEventListener("click", function () {
+      stop(); if (cur < 0) setStep(0); else setStep(cur + 1);
+    });
+    document.getElementById("seqReset").addEventListener("click", function () {
+      stop(); cur = -1;
+      pills.forEach(function (el, j) {
+        el.classList.remove("active", "done");
+        el.classList.add("pending");
+        place(el, STEPS[j].from, STEPS[j].from === "m" ? HEAD_TOP : TOP + j * ROW);
+      });
+      titleEl.textContent = "准备就绪";
+      detailEl.textContent = "点击“播放”开始；也可以直接点击下方步骤号跳转。";
+      counterEl.textContent = "0 / " + STEPS.length;
+      var dots = dotsEl.querySelectorAll(".dot");
+      for (var k = 0; k < dots.length; k++) dots[k].classList.remove("on", "past");
+    });
+  }
+
+  /* ---------------- 4. 逐层流水动画（可单步） ---------------- */
+  function initPipe() {
+    var track = document.getElementById("layerTrack");
+    if (!track) return;
+    var N = 8;
+    var chips = [];
+    for (var i = 0; i < N; i++) {
+      var c = document.createElement("span");
+      c.className = "lt-chip";
+      c.textContent = "L" + i;
+      track.appendChild(c);
+      chips.push(c);
+    }
+    var bufs = [
+      document.getElementById("buf0"),
+      document.getElementById("buf1"),
+      document.getElementById("buf2"),
+      document.getElementById("buf3")
+    ];
+    var dCpu = document.getElementById("dCpu");
+    var dHbm = document.getElementById("dHbm");
+    var gateBox = document.getElementById("gateBox");
+    var gateText = document.getElementById("gateText");
+    var status = document.getElementById("pipeStatus");
+    var playBtn = document.getElementById("pipePlay");
+    var stepBtn = document.getElementById("pipeNext");
+    var resetBtn = document.getElementById("pipeReset");
+    var counter = document.getElementById("pipeCounter");
+
+    /* 一层四个阶段：写入 → READ_READY → D 拉取 → READ_DONE */
+    var PHASE_NAME = ["写入 KV", "READ_READY", "D 拉取", "READ_DONE"];
+    var PHASE_MS = [900, 800, 1100, 750];
+
+    var layer = 0, phase = 0;
+    var playing = true;
+    var visible = !("IntersectionObserver" in window);
+    var timer = null;
+
+    function setBuf(el, cls) {
+      bufs.forEach(function (b) { b.classList.remove("writing", "sending", "reading", "done"); });
+      if (el && cls) el.classList.add(cls);
+    }
+    function clearBufs() {
+      bufs.forEach(function (b) { b.classList.remove("writing", "sending", "reading", "done"); });
+    }
+    function note(text) { status.textContent = text; }
+
+    function render() {
+      chips.forEach(function (c, k) {
+        c.classList.toggle("active", phase >= 0 && k === layer);
+        c.classList.toggle("done", phase >= 0 && k < layer);
+      });
+      gateBox.classList.remove("hot");
+      dCpu.classList.remove("hot");
+      dHbm.classList.remove("hot");
+
+      if (phase < 0) {
+        clearBufs();
+        gateText.textContent = "初始为 set（可复用）";
+        counter.textContent = "L0 · 未开始";
+        note("已重置：点击“单步”逐阶段观察，或点击“播放”自动运行。");
+        return;
+      }
+
+      var buf = layer === 0 ? bufs[0] : bufs[1 + ((layer - 1) % 3)];
+      var label = layer === 0 ? "Buf A（L0 独立）" : "共享 " + buf.querySelector("span").textContent;
+
+      if (phase === 0) {
+        setBuf(buf, "writing");
+        gateText.textContent = "close：本层写入中";
+        note("L" + layer + "：attention 计算，KV scatter 到 " + label);
+      } else if (phase === 1) {
+        setBuf(buf, "sending");
+        gateText.textContent = "close：等待 D 读取";
+        note("L" + layer + "：READ_READY_BATCH 已发出（源 block 列表）");
+      } else if (phase === 2) {
+        setBuf(buf, "reading");
+        gateBox.classList.add("hot");
+        gateText.textContent = "wait_for_layer_load() 阻塞中";
+        dCpu.classList.add("hot");
+        dHbm.classList.add("hot");
+        note("L" + layer + "：D 正在通过 MemFabric 拉取（主 KV → CPU，indexer → HBM）");
+      } else {
+        setBuf(buf, "done");
+        gateText.textContent = "set：READ_DONE，可复用";
+        note("L" + layer + "：READ_DONE，物理 slot 闸门重新打开");
+      }
+      counter.textContent = "L" + layer + " · 阶段 " + (phase + 1) + "/4 · " + PHASE_NAME[phase];
+    }
+
+    function stopTimer() {
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+    function schedule() {
+      stopTimer();
+      if (!playing || !visible) return;
+      timer = setTimeout(function () { timer = null; advance(); }, PHASE_MS[phase] || 800);
+    }
+    function advance() {
+      if (phase < 0) {
+        phase = 0;
+      } else if (phase < 3) {
+        phase++;
+      } else if (layer < N - 1) {
+        layer++;
+        phase = 0;
+      } else {
+        layer = 0;
+        phase = 0;
+      }
+      render();
+      schedule();
+    }
+    function pause() {
+      playing = false;
+      stopTimer();
+      playBtn.textContent = "播放";
+    }
+
+    playBtn.addEventListener("click", function () {
+      if (playing) {
+        pause();
+      } else {
+        playing = true;
+        playBtn.textContent = "暂停";
+        if (phase < 0) advance();
+        else { render(); schedule(); }
+      }
+    });
+    stepBtn.addEventListener("click", function () {
+      pause();
+      advance();
+    });
+    resetBtn.addEventListener("click", function () {
+      pause();
+      layer = 0;
+      phase = -1;
+      render();
+    });
+
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          var wasVisible = visible;
+          visible = e.isIntersecting;
+          if (visible && !wasVisible) schedule();
+          if (!visible) stopTimer();
+        });
+      }, { threshold: 0.15 });
+      io.observe(track.closest(".pipe"));
+    }
+
+    render();
+    schedule();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    highlight();
+    reveals();
+    navSpy();
+    initSeq();
+    initPipe();
+  });
+})();
+</script>
+</body>
+</html>
