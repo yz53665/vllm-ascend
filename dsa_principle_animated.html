@@ -1,0 +1,1687 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSA 原理动图 · DeepSeek Sparse Attention</title>
+<style>
+:root{
+  --bg:#0a0f1e;
+  --bg2:#0d1428;
+  --panel:#101a31;
+  --line:#22305a;
+  --line2:#2c3f6b;
+  --text:#e8eefc;
+  --muted:#8fa0c4;
+  --dim:#5f719a;
+  --blue:#5aa9ff;
+  --cyan:#43d9c6;
+  --orange:#ffab4a;
+  --green:#4ade80;
+  --red:#ff6b6b;
+  --purple:#b98bff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:
+    radial-gradient(1100px 540px at 12% -10%,rgba(90,169,255,.13),transparent 60%),
+    radial-gradient(900px 500px at 92% 0%,rgba(67,217,198,.08),transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font:15px/1.75 "Inter","Noto Sans SC",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1180px;margin:0 auto;padding:0 22px}
+code,kbd,pre{font-family:var(--mono)}
+sub{font-size:.72em}
+
+/* ---------- hero ---------- */
+.hero{padding:64px 0 30px;border-bottom:1px solid rgba(34,48,90,.6)}
+.eyebrow{margin:0 0 10px;font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--cyan)}
+.hero h1{margin:0;font-size:clamp(30px,4.6vw,52px);line-height:1.15;letter-spacing:-.02em}
+.hero h1 span{color:var(--blue);font-size:.62em;letter-spacing:.01em}
+.lede{max-width:820px;color:var(--muted);font-size:16px;margin:18px 0 0}
+.lede b{color:var(--text)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chips span{
+  font:600 12px/1 var(--mono);color:#cfe0ff;
+  border:1px solid var(--line2);background:rgba(20,32,60,.7);
+  padding:8px 11px;border-radius:999px;
+}
+.chips span i{color:var(--cyan);font-style:normal}
+
+/* ---------- toc ---------- */
+.toc{
+  position:sticky;top:0;z-index:60;
+  background:rgba(10,15,30,.82);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(34,48,90,.7);
+}
+.toc .wrap{display:flex;gap:6px;overflow-x:auto;padding-top:10px;padding-bottom:10px}
+.toc a{
+  flex:0 0 auto;color:var(--muted);font-size:12.5px;font-weight:600;
+  padding:6px 10px;border-radius:8px;border:1px solid transparent;white-space:nowrap;
+}
+.toc a:hover{color:var(--text);background:rgba(34,48,90,.5);text-decoration:none}
+
+/* ---------- section ---------- */
+section{padding:54px 0 10px}
+.sec-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:22px}
+.sec-num{
+  flex:0 0 auto;width:34px;height:34px;border-radius:10px;
+  display:grid;place-items:center;font:700 14px/1 var(--mono);
+  color:#0a0f1e;background:linear-gradient(135deg,var(--cyan),var(--blue));
+}
+.sec-head h2{margin:0;font-size:clamp(21px,2.6vw,28px);letter-spacing:-.01em;line-height:1.3}
+.sec-head p{margin:4px 0 0;color:var(--muted);font-size:14px}
+
+/* ---------- generic cards ---------- */
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{
+  border:1px solid var(--line);border-radius:14px;
+  background:linear-gradient(180deg,rgba(18,28,52,.9),rgba(13,20,40,.9));
+  padding:16px 18px;
+}
+.card h3{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:8px}
+.card p{margin:0;color:var(--muted);font-size:13.5px}
+.card .mono{font-family:var(--mono);color:#cfe0ff;font-size:12.5px}
+.badge{
+  display:inline-block;font:700 10px/1 var(--mono);letter-spacing:.06em;
+  padding:4px 7px;border-radius:6px;background:rgba(90,169,255,.14);
+  color:var(--blue);border:1px solid rgba(90,169,255,.3);
+}
+.badge.g{background:rgba(74,222,128,.12);color:var(--green);border-color:rgba(74,222,128,.3)}
+.badge.o{background:rgba(255,171,74,.12);color:var(--orange);border-color:rgba(255,171,74,.3)}
+.badge.p{background:rgba(185,139,255,.12);color:var(--purple);border-color:rgba(185,139,255,.3)}
+
+/* formula */
+.formula{
+  margin-top:14px;border:1px solid var(--line);border-left:3px solid var(--cyan);
+  border-radius:10px;background:#0b1224;padding:14px 16px;
+  font-family:var(--mono);font-size:13px;line-height:2;color:#cfe0ff;overflow-x:auto;
+}
+.formula b{color:var(--orange);font-weight:700}
+.formula em{color:var(--green);font-style:normal}
+
+/* ---------- stage shell ---------- */
+.stage-shell{margin-top:6px}
+.stage-scroll{overflow-x:auto;padding-bottom:4px}
+.stage{
+  min-width:880px;position:relative;
+  display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.9fr);gap:20px;
+  border:1px solid var(--line);border-radius:16px;
+  background:linear-gradient(180deg,#0d1529,#0a1020);
+  padding:18px;
+}
+.stage-title{
+  display:flex;align-items:center;justify-content:space-between;
+  font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--dim);margin-bottom:10px;
+}
+.stage-title b{color:var(--muted);font-weight:600}
+
+/* ---------- pages ---------- */
+.page-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.scan-wrap{position:relative}
+.scanline{
+  position:absolute;top:0;bottom:0;left:0;width:25%;pointer-events:none;opacity:0;
+  background:linear-gradient(90deg,transparent,rgba(90,169,255,.22),transparent);
+  border-radius:8px;
+}
+.scanline.go{animation:scanline 1.6s linear}
+@keyframes scanline{
+  0%{opacity:0;transform:translateX(-40%)}
+  12%{opacity:1}
+  88%{opacity:1}
+  100%{opacity:0;transform:translateX(320%)}
+}
+.page{
+  position:relative;border:1px solid var(--line);border-radius:10px;
+  background:#0c1428;padding:8px 9px;opacity:.32;
+  transition:opacity .35s ease,border-color .35s ease,background .35s ease,box-shadow .35s ease,transform .35s ease;
+}
+.page.on{opacity:1}
+.page .ph{display:flex;justify-content:space-between;align-items:center;font:600 9.5px/1 var(--mono);color:var(--muted);letter-spacing:.04em}
+.page .ph em{font-style:normal;color:var(--dim)}
+.kvbar{display:flex;gap:2px;margin-top:7px}
+.kvbar i{flex:1;height:18px;border-radius:2px;background:#26365c;transition:background .35s ease}
+.idxbar{height:5px;border-radius:3px;background:#18233d;overflow:hidden;margin-top:6px}
+.idxbar i{display:block;height:100%;width:100%;background:#243a60;transition:background .35s ease}
+.score{height:20px;display:flex;align-items:flex-end;gap:2px;margin-top:5px}
+.score b{flex:1;height:2px;background:#233151;border-radius:1px;transition:height .45s ease,background .35s ease}
+
+.page.scanned{border-color:#3c629e}
+.page.scanned .idxbar i{background:var(--blue);box-shadow:0 0 8px rgba(90,169,255,.7)}
+.page.top{border-color:var(--orange);background:#191630;box-shadow:0 0 16px rgba(255,171,74,.22)}
+.page.top .kvbar i{background:#5c4326}
+.page.top .idxbar i{background:var(--orange)}
+.page.dim{opacity:.28;filter:grayscale(.55)}
+.page.read{border-color:rgba(74,222,128,.7);background:#0c1d1a}
+.page.read .kvbar i{background:var(--green)}
+.page.reading{border-color:var(--green);box-shadow:0 0 0 2px rgba(74,222,128,.22),0 0 18px rgba(74,222,128,.25);transform:translateY(-2px)}
+.page.reading .kvbar i{background:var(--green)}
+.page.moving{opacity:.35}
+
+/* ---------- core flow ---------- */
+.flow{display:flex;flex-direction:column;gap:12px}
+.flow > *{position:relative}
+.flow > * + *::before{
+  content:"";position:absolute;left:50%;top:-9px;width:1px;height:6px;
+  background:var(--line2);transform:translateX(-50%);
+}
+.qchip{
+  border:1px dashed #3a5185;border-radius:10px;padding:8px 10px;
+  font:600 11.5px/1.3 var(--mono);color:#cfe0ff;background:#0d1730;text-align:center;
+  transition:.3s;
+}
+.qchip.active{border-color:var(--blue);color:#fff;box-shadow:0 0 14px rgba(90,169,255,.18)}
+.unit{
+  border:1px solid var(--line);border-radius:11px;padding:10px 12px;
+  background:#0c1428;transition:border-color .35s,box-shadow .35s,background .35s;
+}
+.unit .ut{font:600 12.5px/1.3 var(--mono);color:#dbe7ff}
+.unit .us{font:11px/1.5 var(--mono);color:var(--dim);margin-top:3px}
+.unit.active{border-color:var(--cyan);background:#0b1f24;box-shadow:0 0 18px rgba(67,217,198,.18)}
+.unit.active .ut{color:var(--cyan)}
+.out{
+  border:1px solid #2b3f6b;border-radius:10px;padding:9px 12px;text-align:center;
+  font:600 12px/1.3 var(--mono);color:var(--dim);background:#0b1224;transition:.35s;
+}
+.out.active{border-color:var(--green);color:var(--green);box-shadow:0 0 16px rgba(74,222,128,.18)}
+
+/* ---------- meters ---------- */
+.meter-panel{
+  margin-top:14px;border:1px solid var(--line);border-radius:12px;
+  background:#0b1224;padding:12px 14px;display:grid;gap:9px;
+}
+.meter-row{display:grid;grid-template-columns:132px minmax(0,1fr) 96px;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.meter-row span{font-family:var(--mono);font-size:11.5px}
+.meter-row b{text-align:right;font-family:var(--mono);font-size:11.5px;color:#cfe0ff;font-weight:600}
+.meter{height:8px;background:#121d36;border-radius:99px;overflow:hidden;border:1px solid #1b2948}
+.meter i{display:block;height:100%;width:0;border-radius:99px;transition:width .5s cubic-bezier(.2,.7,.2,1)}
+#mIdx{background:linear-gradient(90deg,#3a6fb8,var(--blue))}
+#mKv{background:linear-gradient(90deg,#2b7c5a,var(--green))}
+#mTot{background:linear-gradient(90deg,var(--blue),var(--green))}
+.meter-row.total{color:#cfe0ff;border-top:1px dashed #1e2b4a;padding-top:8px}
+.byte-list{
+  margin-top:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;
+  font-size:11.5px;color:var(--dim);
+}
+.byte-list div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed #18233d;padding-bottom:4px}
+.byte-list code{color:#b9cdf2;font-size:11px}
+
+/* ---------- controls ---------- */
+.controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:14px 0 10px}
+.btn{
+  appearance:none;border:1px solid var(--line2);background:#111c35;color:#cfe0ff;
+  font:600 12.5px/1 var(--mono);padding:9px 14px;border-radius:9px;cursor:pointer;
+  transition:.18s ease;
+}
+.btn:hover{border-color:#3d5c96;background:#16243f;transform:translateY(-1px)}
+.btn.primary{background:linear-gradient(135deg,var(--blue),#3f7fe0);border-color:transparent;color:#07101f}
+.btn.primary:hover{filter:brightness(1.06)}
+.status{font:11.5px/1 var(--mono);color:var(--dim);margin-left:auto}
+.dots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.dots button{
+  appearance:none;cursor:pointer;border:1px solid var(--line);background:#0c1428;
+  color:var(--dim);font:600 11px/1 var(--mono);padding:7px 9px;border-radius:8px;
+  display:flex;align-items:center;gap:6px;transition:.18s;
+}
+.dots button b{
+  display:grid;place-items:center;width:16px;height:16px;border-radius:5px;
+  background:#1a2947;color:#9fb4da;font-size:9.5px;font-weight:700;
+}
+.dots button:hover{color:#cfe0ff;border-color:#314a7a}
+.dots button.on{border-color:var(--cyan);color:var(--cyan);background:#0b1f24}
+.dots button.on b{background:var(--cyan);color:#07101f}
+.caption{
+  border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:10px;
+  background:#0b1224;padding:12px 14px;font-size:13.5px;color:#c3d3ef;min-height:66px;
+}
+.caption b{color:var(--cyan)}
+.caption code{color:var(--orange);background:rgba(255,171,74,.08);padding:1px 5px;border-radius:4px;font-size:12px}
+.caption .k{color:var(--green);font-family:var(--mono)}
+
+/* ---------- fly chip ---------- */
+.fly-chip{
+  position:fixed;z-index:9999;transform:translate(-50%,-50%);
+  padding:5px 8px;border-radius:8px;pointer-events:none;white-space:nowrap;
+  font:700 10px/1.2 var(--mono);color:#06101d;background:var(--green);
+  box-shadow:0 8px 22px rgba(0,0,0,.5);
+  transition:transform .52s cubic-bezier(.2,.75,.2,1),opacity .52s ease;
+}
+.fly-chip.kv{background:var(--green)}
+.fly-chip.idx{background:var(--blue)}
+.fly-chip.tok{background:var(--orange)}
+
+/* ---------- race ---------- */
+.race-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.race-caption{font-size:13px;color:var(--muted);margin-left:auto;font-family:var(--mono);font-size:11.5px}
+.lanes{display:grid;gap:12px}
+.lane{border:1px solid var(--line);border-radius:14px;background:#0c1326;padding:12px 14px;transition:border-color .3s}
+.lane.dsa{border-color:#2b4a70}
+.lane-hd{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted)}
+.lane-hd .tag{font:700 10px/1 var(--mono);letter-spacing:.06em;padding:5px 8px;border-radius:6px;background:rgba(255,107,107,.12);color:var(--red);border:1px solid rgba(255,107,107,.3)}
+.lane.dsa .tag{background:rgba(67,217,198,.12);color:var(--cyan);border-color:rgba(67,217,198,.3)}
+.lane-hd .done{margin-left:auto;font:700 10px/1 var(--mono);padding:4px 7px;border-radius:6px;background:rgba(74,222,128,.14);color:var(--green);border:1px solid rgba(74,222,128,.35);opacity:0;transition:opacity .3s}
+.lane-hd .done.show{opacity:1}
+.lane-pages{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;margin:10px 0}
+.lane .page{padding:5px 6px;border-radius:7px;opacity:1}
+.lane .page.dim{opacity:.24;filter:grayscale(.6)}
+.lane .ph{font-size:9px}
+.lane .kvbar{margin-top:5px}
+.lane .kvbar i{height:12px}
+.lane .idxbar{height:4px;margin-top:4px}
+.lane.dense .idxbar{opacity:.3}
+.lane-ft{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:10px;align-items:center}
+.lane-ft .meter{height:9px}
+.lane-ft span{text-align:right;font:600 11px/1 var(--mono);color:#cfe0ff}
+#denseBar{background:linear-gradient(90deg,#7a3a3a,var(--red))}
+#dsaBar{background:linear-gradient(90deg,#2b7c5a,var(--green))}
+
+/* ---------- gather ---------- */
+.gather-scroll{overflow-x:auto}
+.gather-stage{
+  min-width:980px;display:grid;grid-template-columns:200px 180px minmax(0,1fr) 200px;
+  gap:12px;align-items:stretch;
+}
+.gcard{border:1px solid var(--line);border-radius:12px;background:#0c1326;padding:12px}
+.gcard h4{margin:0 0 8px;font:600 11px/1.3 var(--mono);color:var(--muted);letter-spacing:.04em}
+.gcard .hint{margin:8px 0 0;color:var(--dim);font-size:11px;font-family:var(--mono);line-height:1.5}
+.lp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+.lp{
+  border:1px solid #223256;border-radius:6px;padding:6px 7px;
+  font:600 10px/1 var(--mono);color:#93a8cd;background:#0a1224;transition:.3s;
+}
+.lp.target{border-color:var(--orange);color:var(--orange);background:#1d1728;box-shadow:0 0 12px rgba(255,171,74,.2)}
+.bt{display:grid;gap:4px}
+.bt-row{
+  display:grid;grid-template-columns:1fr 22px 1fr;align-items:center;gap:4px;
+  border:1px solid #1c2946;border-radius:6px;padding:5px 7px;
+  font:600 10px/1 var(--mono);color:#8fa0c4;background:#0a1224;transition:.3s;
+}
+.bt-row em{font-style:normal;text-align:center;color:#40557f}
+.bt-row.hit{border-color:var(--orange);color:var(--orange);background:#1d1728}
+.rows{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:2px}
+.cell{height:11px;border-radius:2px;background:#1b2745;transition:.3s}
+.cell.hit{background:var(--orange);box-shadow:0 0 6px rgba(255,171,74,.7)}
+.cell.moved{background:#5b4326;opacity:.35}
+.buf{display:flex;flex-wrap:wrap;gap:5px;min-height:44px;align-items:flex-start;border:1px dashed #2b3f6b;border-radius:8px;padding:7px}
+.buf .empty{font:11px/1.5 var(--mono);color:var(--dim)}
+.bchip{font:600 10px/1 var(--mono);padding:5px 7px;border-radius:6px;background:var(--orange);color:#1a1206}
+.row-legend{display:flex;justify-content:space-between;margin-top:6px;font:9.5px/1 var(--mono);color:var(--dim)}
+
+/* ---------- variants ---------- */
+.variant{border:1px solid var(--line);border-radius:14px;background:#0c1326;padding:16px}
+.variant h3{margin:0 0 4px;font-size:15px}
+.variant .sub{color:var(--muted);font-size:12.5px;margin:0 0 12px}
+.mini{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:10px 0}
+.mtok,.mcmp{
+  font:700 10px/1 var(--mono);padding:6px 7px;border-radius:6px;border:1px solid #2b3f6b;
+  color:#a9bde0;background:#0a1224;
+}
+.mcmp{border-color:var(--orange);color:var(--orange);background:#1d1728;animation:cpulse 2.4s ease-in-out infinite}
+@keyframes cpulse{0%,100%{box-shadow:0 0 0 rgba(255,171,74,0)}50%{box-shadow:0 0 14px rgba(255,171,74,.45)}}
+.marrow{color:var(--dim);font-family:var(--mono);font-size:12px}
+.layer-strip{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.lchip{font:700 10px/1 var(--mono);padding:7px 9px;border-radius:7px;border:1px solid #2b3f6b;color:#a9bde0;background:#0a1224}
+.lchip.f{border-color:var(--cyan);color:var(--cyan);background:#0b1f24}
+.lchip.s{border-color:#3a4c74;color:#7f93b8}
+.vlist{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:12.5px}
+.vlist li{margin:5px 0}
+.vlist code{color:var(--orange);font-size:11.5px}
+
+/* ---------- dashboard ---------- */
+.dash{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#0d1529,#0a1020);padding:18px}
+.dash-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.dash-head label{font:600 11px/1 var(--mono);letter-spacing:.06em;color:var(--dim);text-transform:uppercase}
+.dash-head output{font:700 20px/1 var(--mono);color:var(--cyan);min-width:74px}
+input[type="range"]{
+  -webkit-appearance:none;appearance:none;flex:1 1 260px;height:6px;border-radius:99px;
+  background:linear-gradient(90deg,#2c4a7a,#1a2745);outline:none;
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+  background:var(--cyan);border:3px solid #071622;cursor:pointer;box-shadow:0 0 12px rgba(67,217,198,.5);
+}
+input[type="range"]::-moz-range-thumb{
+  width:18px;height:18px;border-radius:50%;background:var(--cyan);
+  border:3px solid #071622;cursor:pointer;
+}
+.bars{display:grid;gap:10px;margin-bottom:16px}
+.bar-row{display:grid;grid-template-columns:52px minmax(0,1fr) 100px;gap:10px;align-items:center}
+.bar-row .bl{font:600 11px/1 var(--mono);color:var(--muted)}
+.bar-row b{text-align:right;font:600 11.5px/1 var(--mono);color:#dbe7ff}
+.cmp-bar{height:24px;border-radius:7px;background:#0a1224;border:1px solid #1b2948;overflow:hidden;display:flex}
+.cmp-bar i{display:block;height:100%;transition:width .45s cubic-bezier(.2,.7,.2,1)}
+.dense-i{background:linear-gradient(90deg,#7a3a3a,#ff6b6b)}
+.idx-i{background:linear-gradient(90deg,#33558c,var(--blue))}
+.kv-i{background:linear-gradient(90deg,#2b7c5a,var(--green))}
+.dash-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.stat{border:1px solid var(--line);border-radius:10px;background:#0b1224;padding:11px 12px}
+.stat span{display:block;font:10.5px/1.4 var(--mono);color:var(--dim);letter-spacing:.03em}
+.stat b{display:block;font:700 16px/1.4 var(--mono);color:var(--cyan);margin-top:2px}
+.stat small{display:block;color:var(--muted);font-size:11px;font-family:var(--mono)}
+table.num-table{width:100%;border-collapse:collapse;font:11.5px/1.6 var(--mono)}
+.num-table th,.num-table td{padding:7px 9px;border-bottom:1px solid #18233d;text-align:right;color:var(--muted);white-space:nowrap}
+.num-table th{color:var(--dim);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.num-table td:first-child,.num-table th:first-child{text-align:left;color:#cfe0ff}
+.num-table tr.on td{background:rgba(67,217,198,.07);color:#e8eefc}
+.num-table tr.on td:first-child{color:var(--cyan)}
+
+/* ---------- code ---------- */
+.codewrap{border:1px solid var(--line);border-radius:12px;background:#0a1224;overflow:hidden}
+.codewrap .ch{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #18233d;background:#0d1730}
+.codewrap .ch span{font:600 10.5px/1.3 var(--mono);color:var(--muted);word-break:break-all}
+.codewrap .ch b{font:700 9.5px/1 var(--mono);padding:3px 6px;border-radius:5px;background:rgba(90,169,255,.14);color:var(--blue);border:1px solid rgba(90,169,255,.3)}
+pre.code{margin:0;padding:12px 14px;overflow-x:auto;font-size:11.5px;line-height:1.75;color:#c6d6f2}
+pre.code .cm{color:#5f759b}
+pre.code .hl{color:var(--orange);background:rgba(255,171,74,.09);border-radius:3px;padding:0 2px}
+pre.code .str{color:#8fd6b3}
+pre.code .kw{color:var(--purple)}
+.notes{margin:10px 0 0;padding-left:17px;color:var(--muted);font-size:12.5px}
+.notes li{margin:4px 0}
+.notes code{color:var(--orange);font-size:11.5px}
+
+/* ---------- cost ---------- */
+.cost{border:1px solid var(--line);border-radius:12px;background:#0c1326;padding:14px 16px;position:relative;overflow:hidden}
+.cost::after{
+  content:"";position:absolute;right:-24px;top:-24px;width:88px;height:88px;border-radius:50%;
+  background:radial-gradient(circle,rgba(90,169,255,.16),transparent 70%);
+}
+.cost h4{margin:0 0 6px;font-size:13.5px;display:flex;gap:8px;align-items:baseline}
+.cost h4 i{font:700 10px/1 var(--mono);font-style:normal;color:var(--dim)}
+.cost p{margin:0;color:var(--muted);font-size:12.5px}
+.cost p code{color:var(--orange);font-size:11.5px}
+
+/* ---------- cheat sheet ---------- */
+.sheet{width:100%;border-collapse:collapse;font-size:12.5px}
+.sheet th,.sheet td{padding:9px 11px;border-bottom:1px solid #18233d;text-align:left;vertical-align:top}
+.sheet th{font:600 10.5px/1.3 var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.05em;background:#0b1224}
+.sheet td:first-child{font-family:var(--mono);color:#cfe0ff;white-space:nowrap}
+.sheet td:nth-child(2){font-family:var(--mono);color:var(--cyan);white-space:nowrap}
+.sheet td{color:var(--muted)}
+
+.note{
+  margin-top:14px;border:1px dashed #2b3f6b;border-radius:10px;padding:11px 14px;
+  color:var(--dim);font-size:12px;background:rgba(10,18,36,.6);
+}
+.note b{color:var(--muted)}
+footer{margin-top:56px;border-top:1px solid rgba(34,48,90,.6);padding:24px 0 44px;color:var(--dim);font-size:12px}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+@media (max-width:900px){
+  .grid3,.grid2{grid-template-columns:1fr}
+  .dash-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .floor-note{font-size:11px}
+  .status{margin-left:0}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">vLLM Ascend · Attention 系列</p>
+    <h1>DSA 原理动图<br><span>DeepSeek Sparse Attention</span></h1>
+    <p class="lede">
+      传统 attention 每生成一个 token，都要把 <b>L</b> 个历史 token 的 KV 全部搬进计算单元。
+      DSA 换了个顺序：先用一份很轻的索引把 <b>L</b> 扫一遍，选出 <b>k</b> 个位置，
+      再只搬这 <b>k</b> 份 KV。下面的动图把“扫、选、搬、算”拆成逐块可见的动作。
+    </p>
+    <div class="chips">
+      <span>indexer <i>64 heads × 128d</i></span>
+      <span>index KV <i>int8 · 128 B/token</i></span>
+      <span>top-k <i>2048 / 512</i></span>
+      <span>page <i>128 token</i></span>
+      <span>sparse_block_size <i>1</i></span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#s1">一页看懂</a>
+    <a href="#s2">传统 vs DSA 赛跑</a>
+    <a href="#s3">五阶段搬运</a>
+    <a href="#s4">块级寻址</a>
+    <a href="#s5">本仓库变体</a>
+    <a href="#s6">数字面板</a>
+    <a href="#s7">代码映射</a>
+    <a href="#s8">代价与边界</a>
+    <a href="#s9">速查表</a>
+  </div>
+</nav>
+
+<section id="s1">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">01</div>
+      <div>
+        <h2>一页看懂：DSA 只是把“全量”换成了“先选再算”</h2>
+        <p>三个动作，对应三份不同的数据，字节数差一个数量级。</p>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="card">
+        <h3><span class="badge">1 · 扫</span> 轻量索引</h3>
+        <p>每个历史 token 额外存一份 <b>128 维 int8</b> 的 indexer K（约 128 B/token），
+        用 64 个 128 维小 head 与当前 query 做点积，得到 L 个分数。读的是细索引，不是主 KV。</p>
+        <p class="mono" style="margin-top:8px">主 KV：576 维 bf16 = 1152 B/token</p>
+      </div>
+      <div class="card">
+        <h3><span class="badge o">2 · 选</span> 每个 query 独立 Top-k</h3>
+        <p>对当前 query 的 L 个分数取前 k 个 token 位置。DSV3.2 默认 <b>2048</b>，
+        GLM 类模型常见 <b>512</b>；k 由 <span class="mono">index_topk</span> 配置。</p>
+        <p class="mono" style="margin-top:8px">索引是 token 级，不是整页</p>
+      </div>
+      <div class="card">
+        <h3><span class="badge g">3 · 算</span> 稀疏 attention</h3>
+        <p>Q 只与这 k 个位置的 KV 做 softmax 和加权求和。主 attention 的
+        QK 对数从 <b>L</b> 降到 <b>k</b>，KV 读取也从 <b>L</b> 行降到 <b>k</b> 行。</p>
+        <p class="mono" style="margin-top:8px">sparse_block_size = 1</p>
+      </div>
+    </div>
+
+    <div class="formula">
+      score<sub>t,i</sub> = Σ<sub>h=1..64</sub> w<sub>h</sub> · ( q<sub>t</sub><sup>h</sup> · k<sub>i</sub><sup>h</sup> ) &nbsp;&nbsp;→&nbsp;&nbsp;
+      <b>I<sub>t</sub> = TopK( score<sub>t</sub> , k )</b><br>
+      o<sub>t</sub> = softmax( q<sub>t</sub> · K[I<sub>t</sub>]<sup>T</sup> / √d ) · V[I<sub>t</sub>]
+      &nbsp;&nbsp;<em>// 只在 k 个位置上做 softmax</em><br>
+      KV 读取： L × 1152 B &nbsp;→&nbsp; L × 128 B &nbsp;+&nbsp; k × 1152 B
+    </div>
+
+    <div class="note">
+      <b>读图约定：</b>页面里每个方块是一页 KV，固定 128 个 token；粗条是主 KV（576 维 bf16），
+      细条是 indexer K（128 维 int8）。为了看清动作，动图把字节数缩小成“页”为单位；
+      第 6 章会用真实长度算账。所有数字都是“单层、单 query”的量级。
+    </div>
+  </div>
+</section>
+
+<section id="s2">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">02</div>
+      <div>
+        <h2>同一条时间轴上，两种 attention 的搬运量</h2>
+        <p>两条 lane 都是 16 页 / 2048 token 的玩具输入；传统逐页搬完，DSA 先扫细条再挑 4 页。</p>
+      </div>
+    </div>
+
+    <div class="race-controls">
+      <button class="btn primary" id="raceToggle">暂停</button>
+      <button class="btn" id="raceReplay">重放</button>
+      <span class="race-caption" id="raceCaption">准备中</span>
+    </div>
+
+    <div class="lanes">
+      <div class="lane" id="laneDense">
+        <div class="lane-hd">
+          <span class="tag">传统 ATTENTION</span>
+          <span>按页顺序搬运全部 16 页，每页 128 token</span>
+          <b class="done" id="denseDone">完成</b>
+        </div>
+        <div class="lane-pages" id="densePages"></div>
+        <div class="lane-ft">
+          <div class="meter"><i id="denseBar"></i></div>
+          <span id="denseBytes">0 B</span>
+        </div>
+      </div>
+
+      <div class="lane dsa" id="laneDsa">
+        <div class="lane-hd">
+          <span class="tag">DSA</span>
+          <span>先扫 16 条 indexer K，再只搬被选中的 4 页</span>
+          <b class="done" id="dsaDone">完成</b>
+        </div>
+        <div class="lane-pages" id="dsaPagesRace"></div>
+        <div class="lane-ft">
+          <div class="meter"><i id="dsaBar"></i></div>
+          <span id="dsaBytes">0 B</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid3" style="margin-top:14px">
+      <div class="card">
+        <h3>传统：每页都要开</h3>
+        <p>16 页全部进入计算单元，单页主 KV <span class="mono">128 × 1152 B = 144 KB</span>，
+        合计 2.25 MB。没有“选”的动作，也就没有额外索引开销。</p>
+      </div>
+      <div class="card">
+        <h3>DSA：先付一笔小钱</h3>
+        <p>16 条 indexer K 共 <span class="mono">16 × 16 KB = 256 KB</span>，然后只搬 4 页 =
+        <span class="mono">576 KB</span>，合计 0.81 MB，是传统路线的 <b>36%</b>。</p>
+      </div>
+      <div class="card">
+        <h3>真实场景里 k 更小</h3>
+        <p>玩具示例 top-k 占 25%，真实 <span class="mono">k / L</span> 往往只有 1.6%–6.3%，
+        DSA 省下的主 KV 搬运更多；但索引全扫的 11% 是固定底噪。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s3">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">03</div>
+      <div>
+        <h2>五阶段：每个数据块从哪来、到哪去</h2>
+        <p>可单步。播放时注意粗条与细条分别被谁读取，以及搬运通道里飞过的块。</p>
+      </div>
+    </div>
+
+    <div class="stage-scroll">
+      <div class="stage">
+        <div>
+          <div class="stage-title"><b>HBM · paged KV cache</b><span>PA_BSND · 128 tok/page</span></div>
+          <div class="scan-wrap">
+            <div class="page-grid" id="dsaPages"></div>
+            <div class="scanline" id="dsaScan"></div>
+          </div>
+          <div class="byte-list">
+            <div><span>单页主 KV</span><code>128 × 1152 B = 144 KB</code></div>
+            <div><span>单页 indexer K</span><code>128 × 128 B = 16 KB</code></div>
+            <div><span>本次索引扫描</span><code id="byteScan">—</code></div>
+            <div><span>本次主 KV 搬运</span><code id="byteMove">—</code></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="stage-title"><b>Attention core</b><span>per query</span></div>
+          <div class="flow">
+            <div class="qchip" id="dsaQ">q<sub>t</sub> · 当前 query</div>
+            <div class="unit" id="dsaIndexer">
+              <div class="ut">Lightning Indexer</div>
+              <div class="us">64 heads × 128d · int8 · 全量 L</div>
+            </div>
+            <div class="unit" id="dsaTopk">
+              <div class="ut">Top-k Selector</div>
+              <div class="us">保留 k 个 token 位置</div>
+            </div>
+            <div class="unit" id="dsaAttn">
+              <div class="ut">Sparse MLA Core</div>
+              <div class="us">sparse_block_size = 1 · 只算 k 个位置</div>
+            </div>
+            <div class="out" id="dsaOut">output o<sub>t</sub></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="meter-panel">
+      <div class="meter-row"><span>indexer K 扫描</span><div class="meter"><i id="mIdx"></i></div><b id="vIdx">0 B</b></div>
+      <div class="meter-row"><span>主 KV 搬运</span><div class="meter"><i id="mKv"></i></div><b id="vKv">0 B</b></div>
+      <div class="meter-row total"><span>合计 / 全量</span><div class="meter"><i id="mTot"></i></div><b id="vTot">0%</b></div>
+    </div>
+
+    <div class="controls">
+      <button class="btn primary" id="dsaPlay">播放</button>
+      <button class="btn" id="dsaPause">暂停</button>
+      <button class="btn" id="dsaNext">单步</button>
+      <button class="btn" id="dsaReset">重置</button>
+      <span class="status" id="dsaStatus">步骤 1 / 5</span>
+    </div>
+    <div class="dots" id="dsaDots"></div>
+    <div class="caption" id="dsaCaption"></div>
+  </div>
+</section>
+
+<section id="s4">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">04</div>
+      <div>
+        <h2>块级寻址：一条稀疏索引如何落到一行 KV</h2>
+        <p>索引给的是 token 位置；kernel 要先查 block_table，再在页内按偏移取行。</p>
+      </div>
+    </div>
+
+    <div class="gather-scroll">
+      <div class="gather-stage">
+        <div class="gcard">
+          <h4>逻辑 token 序列</h4>
+          <div class="lp-grid" id="gLogicalPages"></div>
+          <p class="hint">命中的 token 919 落在逻辑页 7（token 896–1023）</p>
+        </div>
+
+        <div class="gcard" id="gTable">
+          <h4>block_table</h4>
+          <div class="bt" id="gBt"></div>
+          <p class="hint">logical page → physical page</p>
+        </div>
+
+        <div class="gcard" id="gPhysCard">
+          <h4>物理页 P21 · 128 行</h4>
+          <div class="rows" id="gPhys"></div>
+          <div class="row-legend"><span>row 0</span><span>row 63</span><span>row 127</span></div>
+          <p class="hint">偏移 = token % 128；命中 row 3 / 57 / 100</p>
+        </div>
+
+        <div class="gcard">
+          <h4>gather buffer</h4>
+          <div class="buf" id="gBuf"><span class="empty">空</span></div>
+          <p class="hint">只装被选中的行，供 attention kernel 使用</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn primary" id="gPlay">播放</button>
+      <button class="btn" id="gPause">暂停</button>
+      <button class="btn" id="gNext">单步</button>
+      <button class="btn" id="gReset">重置</button>
+      <span class="status" id="gStatus">步骤 1 / 4</span>
+    </div>
+    <div class="caption" id="gCaption"></div>
+
+    <div class="grid3" style="margin-top:14px">
+      <div class="card">
+        <h3>logical → physical</h3>
+        <p>paged KV 不保证逻辑页连续。稀疏索引指向逻辑 token，
+        kernel 用 <span class="mono">block_table[token // 128]</span> 换算出物理页号。</p>
+      </div>
+      <div class="card">
+        <h3>页内偏移</h3>
+        <p><span class="mono">row = token % 128</span>。同一页里只有 3 行被命中，
+        其余 125 行不需要进入计算单元。</p>
+      </div>
+      <div class="card">
+        <h3>搬运粒度</h3>
+        <p><span class="mono">sparse_block_size = 1</span> 表示按 token 行 gather。
+        逻辑字节是 k 行；实际带宽会受随机访问、cache line 与 DRAM 行局部性影响。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s5">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">05</div>
+      <div>
+        <h2>本仓库里的三种 DSA 形态</h2>
+        <p>同一条主线，差别在“索引作用在谁身上”以及“是否先把 KV 压缩”。</p>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="variant">
+        <h3>compress_ratio ≤ 1</h3>
+        <p class="sub">纯滑窗：不做 top-k</p>
+        <div class="mini">
+          <span class="mtok">t-7</span><span class="mtok">t-6</span><span class="mtok">t-5</span>
+          <span class="mtok">t-4</span><span class="mtok">t-3</span><span class="mtok">t-2</span>
+          <span class="mtok">t-1</span><span class="mcmp">q<sub>t</sub></span>
+        </div>
+        <ul class="vlist">
+          <li>attention 直接看最近 <code>sliding_window</code> 个 token</li>
+          <li><code>ori_mask_mode=4</code>，<code>ori_win_left=window-1</code></li>
+          <li>没有 indexer 扫描，也没有稀疏索引</li>
+        </ul>
+      </div>
+
+      <div class="variant">
+        <h3>compress_ratio = 4</h3>
+        <p class="sub">SWA + 4:1 压缩 + top-k</p>
+        <div class="mini">
+          <span class="mtok">t0</span><span class="mtok">t1</span><span class="mtok">t2</span><span class="mtok">t3</span>
+          <span class="marrow">→</span><span class="mcmp">c0</span>
+          <span class="marrow">· · ·</span><span class="mcmp">c1</span>
+        </div>
+        <ul class="vlist">
+          <li>compressor 每 4 个 token 生成 1 条 compressed KV，带 2× overlap</li>
+          <li>indexer 在压缩 KV 上选 top-k，<code>cmp_sparse_indices</code> + <code>cmp_ratio=4</code></li>
+          <li>同时保留 SWA 分支（<code>ori_kv</code>），两条分支在一次 attention 内合并</li>
+        </ul>
+      </div>
+
+      <div class="variant">
+        <h3>compress_ratio = 128</h3>
+        <p class="sub">SWA + 128:1 压缩，不做 top-k</p>
+        <div class="mini">
+          <span class="mtok">t0</span><span class="mtok">t1</span><span class="mtok">…</span><span class="mtok">t127</span>
+          <span class="marrow">→</span><span class="mcmp">c0</span>
+        </div>
+        <ul class="vlist">
+          <li>compressor 每 128 个 token 生成 1 条 compressed KV</li>
+          <li>压缩后序列已经很短，直接全量看 compressed KV</li>
+          <li>省掉 indexer，但压缩 KV 的表达是近似</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid2" style="margin-top:14px">
+      <div class="variant">
+        <h3>IndexCache：跨层复用 top-k</h3>
+        <p class="sub">首层算一次，后面几层直接读 buffer</p>
+        <div class="layer-strip">
+          <span class="lchip f">L0 · F</span>
+          <span class="lchip s">L1 · S</span>
+          <span class="lchip s">L2 · S</span>
+          <span class="lchip f">L3 · F</span>
+          <span class="lchip s">L4 · S</span>
+        </div>
+        <ul class="vlist">
+          <li><code>skip_topk=True</code> 的层不再跑 indexer，直接读 <code>topk_indices_buffer</code></li>
+          <li>层间模式来自 <code>index_topk_pattern</code>（F=算，S=复用）与 <code>index_topk_freq</code></li>
+          <li>省的是 indexer 计算与细条读取，代价是假设相邻层 top-k 足够相似</li>
+        </ul>
+      </div>
+
+      <div class="variant">
+        <h3>索引与 KV 的量化</h3>
+        <p class="sub">让“扫一遍”的固定成本尽量小</p>
+        <ul class="vlist">
+          <li>indexer K 用 <code>int8</code>（A5 上为 <code>fp8_e4m3</code>），每 token 128 B</li>
+          <li>query 也可量化：<code>npu_lightning_indexer_quant</code> 带 query/key 的 dequant scale</li>
+          <li>C8 路径下主 KV 打包成量化格式，走 <code>npu_kv_quant_sparse_flash_attention</code></li>
+          <li>索引越小，L 很大时的“底噪”越低，但打分精度也越依赖校准</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s6">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">06</div>
+      <div>
+        <h2>把页换成真实长度：省了多少，什么时候不省</h2>
+        <p>按单层、单 query、MLA latent 576 维 bf16、indexer 128 维 int8、k=2048 估算。</p>
+      </div>
+    </div>
+
+    <div class="dash">
+      <div class="dash-head">
+        <label for="lenSlider">上下文长度 L</label>
+        <input type="range" id="lenSlider" min="0" max="5" step="1" value="3">
+        <output id="lenOut">32k</output>
+      </div>
+
+      <div class="bars">
+        <div class="bar-row">
+          <span class="bl">传统</span>
+          <div class="cmp-bar"><i class="dense-i" style="width:100%"></i></div>
+          <b id="denseVal">—</b>
+        </div>
+        <div class="bar-row">
+          <span class="bl">DSA</span>
+          <div class="cmp-bar"><i class="idx-i" id="barIdx"></i><i class="kv-i" id="barKv"></i></div>
+          <b id="dsaVal">—</b>
+        </div>
+      </div>
+
+      <div class="dash-stats">
+        <div class="stat"><span>KV 读取占比</span><b id="statRatio">—</b><small id="statRatioSub">DSA / dense</small></div>
+        <div class="stat"><span>indexer 扫描</span><b id="statIdx">—</b><small id="statIdxSub">固定底噪</small></div>
+        <div class="stat"><span>主 attention 计算</span><b id="statComp">—</b><small>k / L</small></div>
+        <div class="stat"><span>理论交叉点</span><b>≈ 2.3k</b><small>再短就倒亏</small></div>
+      </div>
+
+      <table class="num-table">
+        <thead>
+          <tr>
+            <th>L</th><th>传统 KV</th><th>DSA index</th><th>DSA 主 KV</th><th>DSA 合计</th><th>占比</th><th>主计算</th>
+          </tr>
+        </thead>
+        <tbody id="numTable"></tbody>
+      </table>
+    </div>
+
+    <div class="grid3" style="margin-top:14px">
+      <div class="card">
+        <h3>省的是“主 KV”，不是全部</h3>
+        <p>DSA 仍需把 L 条 indexer K 全扫一遍，这部分约为主 KV 字节的
+        <span class="mono">128 / 1152 = 11.1%</span>。它不随 k 变小而消失。</p>
+      </div>
+      <div class="card">
+        <h3>短上下文会倒亏</h3>
+        <p>当 <span class="mono">L × 128 + k × 1152 &gt; L × 1152</span>，即
+        <span class="mono">L &lt; k × 1152 / 1024 ≈ 2304</span> 时，DSA 读得比传统还多。
+        稀疏注意力是长上下文方案。</p>
+      </div>
+      <div class="card">
+        <h3>计算降得比带宽多</h3>
+        <p>主 attention 的 QK 对数从 L 降到 k，L=32k 时只剩 6.3%；
+        但 KV 带宽只降到 17.4%。所以 DSA 的收益更多体现在算力侧。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s7">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">07</div>
+      <div>
+        <h2>代码映射：动图里的每一步对应哪一行</h2>
+        <p>索引在 <span class="mono">device_op.py</span>，调度与压缩在 <span class="mono">dsa_v1.py</span>，
+        索引复用与 C8 在 <span class="mono">sfa_v1.py</span>。</p>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="codewrap">
+        <div class="ch"><b>INDEXER</b><span>vllm_ascend/device/device_op.py · indexer_select_post_process</span></div>
+        <pre class="code"><code><span class="cm"># 全量打分 + top-k，读 indexer K（int8）</span>
+topk_indices, _ = torch_npu.npu_lightning_indexer(
+    query=q_li,
+    key=kv_cache[indexer_cache_idx],
+    weights=weights,
+    block_table=attn_metadata.block_table,
+    layout_query=<span class="str">"TND"</span>, layout_key=<span class="str">"PA_BSND"</span>,
+    <span class="hl">sparse_count=2048, sparse_mode=3,</span>
+)</code></pre>
+      </div>
+
+      <div class="codewrap">
+        <div class="ch"><b>SPARSE ATTN</b><span>vllm_ascend/device/device_op.py · execute_sparse_flash_attention_process</span></div>
+        <pre class="code"><code><span class="cm"># 只对 sparse_indices 指向的行做 attention</span>
+torch.ops._C_ascend.npu_sparse_flash_attention(
+    query=ql_nope, key=kv, value=kv,
+    <span class="hl">sparse_indices=topk_indices,
+    sparse_block_size=1,</span>
+    block_table=block_table,
+    layout_query=<span class="str">"TND"</span>, layout_kv=<span class="str">"PA_BSND"</span>,
+    sparse_mode=3, attention_mode=2,
+)</code></pre>
+      </div>
+
+      <div class="codewrap">
+        <div class="ch"><b>COMPRESSOR</b><span>vllm_ascend/attention/dsa_v1.py · _forward_prefill</span></div>
+        <pre class="code"><code><span class="cm"># c=4：先压缩，再在压缩 KV 上 top-k</span>
+compressed_kv = torch.ops._C_ascend.compressor(
+    hidden_states, wkv, wgate, state_cache, ape, norm_weight,
+    ..., <span class="hl">cmp_ratio=self.compress_ratio</span>, coff=coff,
+)
+DeviceOperator.dsa_kv_compress_scatter(
+    compress_kv_cache, compressed_kv, compress_slot_mapping)
+
+compress_topk_idxs, _ = torch.ops._C_ascend.npu_vllm_quant_lightning_indexer(
+    ..., <span class="hl">sparse_count=self.index_topk</span>, cmp_ratio=4)
+
+attn_op(q, ori_kv=swa_kv_cache,
+        cmp_kv=compress_kv_cache,
+        <span class="hl">cmp_sparse_indices=compress_topk_idxs</span>,
+        ori_mask_mode=4, cmp_mask_mode=3, ...)</code></pre>
+      </div>
+
+      <div class="codewrap">
+        <div class="ch"><b>INDEX CACHE</b><span>vllm_ascend/attention/dsa_v1.py · AscendDSAImpl</span></div>
+        <pre class="code"><code>self.skip_topk = kwargs.get(<span class="str">"skip_topk"</span>, False)
+self.topk_indices_buffer = kwargs.get(<span class="str">"topk_indices_buffer"</span>)
+self.use_index_cache = self.skip_topk or ...
+
+if self.skip_topk:
+    <span class="cm"># 直接复用前面层算好的 top-k</span>
+    topk_indices = self.topk_indices_buffer[offset:offset + num_tokens]
+else:
+    topk_indices = self.indexer_select_qli(...)</code></pre>
+      </div>
+
+      <div class="codewrap">
+        <div class="ch"><b>CONFIG</b><span>vllm_ascend/models/deepseek_v4.py · Indexer</span></div>
+        <pre class="code"><code>self.n_heads = config.index_n_heads      <span class="cm"># 64</span>
+self.head_dim = config.index_head_dim    <span class="cm"># 128</span>
+self.index_topk = config.index_topk      <span class="cm"># 2048 / 512</span>
+
+k_dtype = fp8_e4m3fn if A5 else torch.int8
+if self.compress_ratio == 4:
+    self.k_cache = AscendDeepseekV4IndexerCache(...)
+if self.compress_ratio &gt; 1:
+    self.compressor = Compressor(...)     <span class="cm"># 4 or 128</span></code></pre>
+      </div>
+
+      <div class="codewrap">
+        <div class="ch"><b>KERNEL ENTRY</b><span>vllm_ascend/device/device_op.py · C8 路径</span></div>
+        <pre class="code"><code><span class="cm"># 索引侧：query 也量化</span>
+topk_indices = torch.ops._C_ascend.npu_lightning_indexer_quant(
+    query=q_li, key=kv_cache[1], weights=weights,
+    query_dequant_scale=q_li_scale,
+    key_dequant_scale=kv_cache[2].squeeze(2),
+    <span class="hl">sparse_count=2048, sparse_mode=3</span>)
+
+<span class="cm"># 主 attention：KV 为 int8/fp8 时走量化稀疏算子</span>
+torch.ops._C_ascend.npu_kv_quant_sparse_flash_attention(
+    query=torch.cat([ql_nope, q_pe], dim=-1), key=kv, value=kv,
+    sparse_indices=topk_indices, <span class="hl">sparse_block_size=1</span>)</code></pre>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>阅读顺序建议：</b>先看 <span class="mono">deepseek_v4.py</span> 里 Indexer 的维度与 dtype，
+      再看 <span class="mono">device_op.py</span> 的两个算子如何接收 <span class="mono">topk_indices</span>，
+      最后看 <span class="mono">dsa_v1.py</span> 如何在 c=4 时把 SWA 与 compressed KV 两条分支合并。
+    </div>
+  </div>
+</section>
+
+<section id="s8">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">08</div>
+      <div>
+        <h2>代价与边界：动图没画出来的部分</h2>
+        <p>DSA 不是免费的近似，它把成本从“主 attention”搬到了“索引”和“随机访问”。</p>
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div class="cost">
+        <h4><i>01</i> Indexer 仍是 O(L)</h4>
+        <p>全量扫描没有消失，只是每次只读 128 B 而不是 1152 B。L 越大，这 11% 的绝对字节也越大；
+        短上下文会被它拖成负收益。</p>
+      </div>
+      <div class="cost">
+        <h4><i>02</i> 近似精度</h4>
+        <p>top-k 丢掉的位置不会回补。k 越小越快，但越依赖 indexer 打分与真实 attention 的相关性；
+        k 的取值是精度与成本的直接旋钮。</p>
+      </div>
+      <div class="cost">
+        <h4><i>03</i> 随机访问的有效带宽</h4>
+        <p>逻辑上只搬 k 行，但行地址分散会降低 DRAM 行局部性与 L2 命中率。
+        实测收益通常小于“字节比”算出来的理论上限。</p>
+      </div>
+      <div class="cost">
+        <h4><i>04</i> 索引也要存</h4>
+        <p>每 token 每层多 128 B 的 indexer K，约为 MLA 主 KV 的 11%。
+        长上下文下这是一笔可观的常驻显存，需要和 KV 池一起规划。</p>
+      </div>
+      <div class="cost">
+        <h4><i>05</i> 压缩是另一层近似</h4>
+        <p>c=4 时 top-k 命中的是“4 token 合 1”的压缩条目，c=128 时是“128 合 1”。
+        省得更多，但 compressed KV 无法还原细粒度信息，所以还要叠加 SWA 保住近处。</p>
+      </div>
+      <div class="cost">
+        <h4><i>06</i> 层间复用是假设</h4>
+        <p>IndexCache 让后续层直接复用首层 top-k，省掉重复扫描；
+        一旦相邻层关注的位置差异大，精度会掉，因此需要 F/S 模式逐层配置。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s9">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="sec-num">09</div>
+      <div>
+        <h2>速查表</h2>
+        <p>看到这些参数时，能立刻对上动图里的哪一块。</p>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <table class="sheet">
+        <thead>
+          <tr><th>参数 / 名称</th><th>典型值</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>index_n_heads</td><td>64</td><td>lightning indexer 的 head 数，只用于打分，不产出 attention 输出</td></tr>
+          <tr><td>index_head_dim</td><td>128</td><td>indexer 的 head 维度；决定细条每 token 的字节数</td></tr>
+          <tr><td>index_topk</td><td>2048 / 512</td><td>每个 query 保留的历史 token 数；DSV3.2 常用 2048，GLM 类常见 512</td></tr>
+          <tr><td>indexer K dtype</td><td>int8 / fp8</td><td>索引 KV 的存储格式；A5 上用 fp8_e4m3</td></tr>
+          <tr><td>block_size</td><td>128</td><td>DSA 的 paged KV 页大小，也是动图里一个方块的 token 数</td></tr>
+          <tr><td>sparse_block_size</td><td>1</td><td>稀疏 attention 的索引粒度：按 token 行 gather，而不是整页</td></tr>
+          <tr><td>layout_kv</td><td>PA_BSND</td><td>paged KV 的内存布局，配合 block_table 做逻辑页到物理页的映射</td></tr>
+          <tr><td>sparse_mode</td><td>3</td><td>厂商稀疏算子的模式参数，配合 sparse_count 走 top-k 路径</td></tr>
+          <tr><td>attention_mode</td><td>2</td><td>MLA 模式：ql_nope 与 q_pe 分开传入，key 复用同一份 latent KV</td></tr>
+          <tr><td>compress_ratio</td><td>1 / 4 / 128</td><td>KV 压缩比；4 走 top-k，128 直接看全量压缩 KV</td></tr>
+          <tr><td>sliding_window</td><td>模型配置</td><td>SWA 的局部窗口；c&gt;1 时与压缩分支一起参与 attention</td></tr>
+          <tr><td>skip_topk</td><td>True / False</td><td>IndexCache：该层是否直接复用前面层算好的 top-k</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <b>一句话总结：</b>DSA 把“每个 query 看全部 L 个 token”改成“先用 1/9 的字节扫一遍，
+      选 k 个，再看这 k 个”。计算量按 k/L 下降，带宽按 (L×128 + k×1152)/(L×1152) 下降；
+      代价是索引常驻显存、随机访问效率，以及 top-k 的近似误差。
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>基于 vllm-ascend 当前分支的 <span style="font-family:var(--mono)">dsa_v1.py / sfa_v1.py / device_op.py</span> 整理</span>
+    <span>数值为单层、单 query 的示意估算，实际以模型配置与硬件为准</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============ utils ============ */
+  var $ = function(s, r){ return (r || document).querySelector(s); };
+  var $$ = function(s, r){ return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var clamp01 = function(v){ return Math.max(0, Math.min(1, v)); };
+  var prefersReduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  var MAIN_BYTES = 1152;      /* 512 latent + 64 rope, bf16 */
+  var IDX_BYTES = 128;        /* 128 dim, int8 */
+  var TOPK = 2048;
+
+  function mb(bytes){ return (bytes / 1048576).toFixed(2) + " MB"; }
+  function kb(bytes){ return Math.round(bytes / 1024) + " KB"; }
+  function human(bytes){
+    if (!bytes) return "0 B";
+    return bytes < 1048576 ? kb(bytes) : mb(bytes);
+  }
+
+  function timerBag(){
+    var ids = new Set();
+    return {
+      add: function(fn, ms){
+        var id = setTimeout(function(){ ids.delete(id); fn(); }, ms);
+        ids.add(id);
+        return id;
+      },
+      clear: function(){ ids.forEach(clearTimeout); ids.clear(); }
+    };
+  }
+
+  function flyChip(fromEl, toEl, label, kind, done){
+    if (!fromEl || !toEl) return;
+    var a = fromEl.getBoundingClientRect();
+    var b = toEl.getBoundingClientRect();
+    if (!a.width || !b.width) { if (done) setTimeout(done, 60); return; }
+    var chip = document.createElement("div");
+    chip.className = "fly-chip" + (kind ? " " + kind : "");
+    chip.textContent = label;
+    var x0 = a.left + a.width / 2, y0 = a.top + a.height / 2;
+    var x1 = b.left + b.width / 2, y1 = b.top + b.height / 2;
+    chip.style.left = x0 + "px";
+    chip.style.top = y0 + "px";
+    document.body.appendChild(chip);
+    if (prefersReduced) {
+      chip.style.transform = "translate(-50%,-50%) translate(" + (x1 - x0) + "px," + (y1 - y0) + "px)";
+      chip.style.opacity = "0";
+    } else {
+      requestAnimationFrame(function(){
+        chip.style.transform = "translate(-50%,-50%) translate(" + (x1 - x0) + "px," + (y1 - y0) + "px) scale(.96)";
+        chip.style.opacity = ".12";
+      });
+    }
+    setTimeout(function(){ chip.remove(); if (done) done(); }, 560);
+  }
+
+  function player(opts){
+    var count = opts.count;
+    var render = opts.render;
+    var onTick = opts.onTick || function(){};
+    var duration = opts.duration;
+    var i = 0, playing = false, timer = null;
+
+    function stop(){
+      if (timer) { clearTimeout(timer); timer = null; }
+    }
+    function paint(animate){
+      render(i, animate);
+      onTick(i, playing);
+    }
+    function schedule(){
+      stop();
+      if (!playing) return;
+      var ms = typeof duration === "function" ? duration(i) : duration;
+      timer = setTimeout(function(){
+        if (!playing) return;
+        if (i < count - 1) {
+          i += 1;
+          paint(true);
+          schedule();
+        } else {
+          playing = false;
+          onTick(i, playing);
+        }
+      }, ms);
+    }
+    return {
+      play: function(){
+        if (playing) return;
+        if (i >= count - 1) { i = 0; paint(true); }
+        playing = true;
+        onTick(i, playing);
+        schedule();
+      },
+      pause: function(){
+        if (!playing) return;
+        playing = false;
+        stop();
+        onTick(i, playing);
+      },
+      next: function(){
+        this.pause();
+        if (i < count - 1) { i += 1; paint(true); }
+      },
+      reset: function(){
+        this.pause();
+        i = 0;
+        paint(false);
+      },
+      goto: function(n){
+        this.pause();
+        i = Math.max(0, Math.min(count - 1, n));
+        paint(true);
+      },
+      index: function(){ return i; }
+    };
+  }
+
+  /* ============ shared page builder ============ */
+  function buildPages(sel, opts){
+    var el = $(sel);
+    if (!el) return;
+    var n = (opts && opts.n) || 16;
+    var score = !(opts && opts.noScore);
+    var html = "";
+    for (var i = 0; i < n; i++) {
+      html += '<div class="page on" data-i="' + i + '">' +
+        '<div class="ph"><span>P' + i + '</span><em>' + (i < 10 ? "0" + i : i) + '</em></div>' +
+        '<div class="idxbar"><i></i></div>' +
+        '<div class="kvbar">' + new Array(9).join("<i></i>") + '</div>' +
+        (score ? '<div class="score">' + new Array(9).join("<b></b>") + '</div>' : '') +
+        '</div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function scoreAt(i, j){
+    var v = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
+  /* ============ 1. race ============ */
+  (function initRace(){
+    buildPages("#densePages", { noScore: true });
+    buildPages("#dsaPagesRace", { noScore: true });
+    var dPages = $$("#densePages .page");
+    var sPages = $$("#dsaPagesRace .page");
+    if (!dPages.length || !sPages.length) return;
+
+    var SEL = [2, 6, 9, 13];
+    var selIdx = {};
+    SEL.forEach(function(v, k){ selIdx[v] = k; });
+
+    var PAGE = 128 * MAIN_BYTES;       /* 144 KB per page */
+    var IDX_PAGE = 128 * IDX_BYTES;    /* 16 KB per page */
+    var DENSE_TOTAL = 16 * PAGE;
+
+    var t = 0, playing = true, hold = 1400, last = 0, visible = true;
+    var capEl = $("#raceCaption");
+    var denseBytesEl = $("#denseBytes");
+    var dsaBytesEl = $("#dsaBytes");
+    var denseBar = $("#denseBar");
+    var dsaBar = $("#dsaBar");
+    var denseDone = $("#denseDone");
+    var dsaDone = $("#dsaDone");
+    var lastCap = "";
+    var toggle = $("#raceToggle");
+
+    function setCap(s){
+      if (s !== lastCap) { capEl.textContent = s; lastCap = s; }
+    }
+
+    function render(){
+      var pd = clamp01((t - 0.06) / 0.80);
+      var dRead = Math.floor(pd * 16 + 1e-9);
+      var dCur = (pd > 0 && pd < 1) ? Math.min(15, dRead) : -1;
+
+      for (var i = 0; i < dPages.length; i++) {
+        var p = dPages[i];
+        p.classList.toggle("read", i < dRead);
+        p.classList.toggle("reading", i === dCur);
+      }
+
+      var ps = clamp01((t - 0.06) / 0.34);
+      var sScan = Math.floor(ps * 16 + 1e-9);
+      var topkOn = t >= 0.44;
+      var pr = clamp01((t - 0.52) / 0.26);
+      var sRead = Math.floor(pr * 4 + 1e-9);
+      var sCur = (pr > 0 && pr < 1) ? Math.min(3, sRead) : -1;
+
+      for (var j = 0; j < sPages.length; j++) {
+        var q = sPages[j];
+        q.classList.toggle("scanned", j < sScan);
+        var selected = Object.prototype.hasOwnProperty.call(selIdx, String(j));
+        q.classList.toggle("top", topkOn && selected);
+        q.classList.toggle("dim", topkOn && !selected);
+        q.classList.toggle("read", topkOn && selected && selIdx[j] < sRead);
+        q.classList.toggle("reading", topkOn && selected && selIdx[j] === sCur);
+      }
+
+      var denseBytes = dRead * PAGE;
+      var dsaBytes = sScan * IDX_PAGE + sRead * PAGE;
+
+      denseBytesEl.textContent = human(denseBytes);
+      dsaBytesEl.textContent = human(dsaBytes);
+      denseBar.style.width = (denseBytes / DENSE_TOTAL * 100) + "%";
+      dsaBar.style.width = (dsaBytes / DENSE_TOTAL * 100) + "%";
+
+      denseDone.classList.toggle("show", t > 0.88);
+      dsaDone.classList.toggle("show", t > 0.79);
+
+      if (t < 0.06) {
+        setCap("同一时刻：两条 lane 都要为当前 query 取历史 KV");
+      } else if (t < 0.44) {
+        setCap("传统逐页搬主 KV；DSA 只扫细蓝条（indexer K，1/9 字节）");
+      } else if (t < 0.52) {
+        setCap("DSA 选出 4 页 / 512 token；传统已搬 " + dRead + "/16 页");
+      } else if (t < 0.80) {
+        setCap("DSA 只搬被选中的 4 页；传统继续全量搬运");
+      } else {
+        setCap("传统 2.25 MB vs DSA 0.81 MB（36%）");
+      }
+    }
+
+    function frame(ts){
+      if (!last) last = ts;
+      var dt = Math.min(64, ts - last);
+      last = ts;
+
+      if (playing && visible && !document.hidden) {
+        if (t >= 1) {
+          hold -= dt;
+          if (hold <= 0) { t = 0; hold = 1400; }
+        } else {
+          t = Math.min(1, t + dt / 6400);
+        }
+      }
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    toggle.addEventListener("click", function(){
+      playing = !playing;
+      toggle.textContent = playing ? "暂停" : "播放";
+      toggle.classList.toggle("primary", playing);
+    });
+
+    $("#raceReplay").addEventListener("click", function(){
+      t = 0; hold = 1400; playing = true;
+      toggle.textContent = "暂停";
+      toggle.classList.add("primary");
+      render();
+    });
+
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){ visible = e.isIntersecting; });
+      }, { threshold: 0.15 });
+      var sec = $("#s2");
+      if (sec) io.observe(sec);
+    }
+
+    render();
+    requestAnimationFrame(frame);
+  })();
+
+  /* ============ 2. main five-phase player ============ */
+  (function initMain(){
+    buildPages("#dsaPages", { noScore: false });
+    var pages = $$("#dsaPages .page");
+    if (!pages.length) return;
+
+    var SEL_SET = { 2: true, 6: true, 9: true, 13: true };
+    var SEL_LIST = [2, 6, 9, 13];
+    var timers = timerBag();
+    var DENSE = 16 * 128 * MAIN_BYTES;
+
+    var captions = [
+      '<b>① 写 KV。</b>prefill 把每层 KV 写进 paged cache：粗条是 576 维 bf16 主 KV，细蓝条是 128 维 int8 的 indexer K。' +
+        '两条数据此时都已经在 HBM 里，后续只是“读谁”的区别。',
+      '<b>② Indexer 打分。</b>当前 query 拆成 64 个 128 维小 head，与全部 2048 个历史 token 的细条做点积。' +
+        '注意：这一阶段<b>不读粗条</b>，读的是每 token 128 B 的索引。',
+      '<b>③ Top-k。</b>每个 query 独立保留分数最高的 k 个 token 位置（代码里的 <code>sparse_count</code>）。' +
+        '这里玩具示例选了 4 页；真实 <code>index_topk</code> 是 2048 或 512。',
+      '<b>④ 按索引搬运。</b>只把被选中页里的 KV 行搬进计算单元，未选中的页保持灰色。' +
+        '索引是 token 级（<code>sparse_block_size=1</code>），页只是展示单位。',
+      '<b>⑤ 稀疏 attention。</b>Q 只与这 k 个位置做 softmax 与加权求和。' +
+        '主 attention 的 QK 对数从 2048 降到 512，KV 读取从 2.25 MB 降到 0.81 MB。'
+    ];
+
+    function setMeter(barSel, valSel, bytes, frac, text){
+      var bar = $(barSel), val = $(valSel);
+      if (!bar || !val) return;
+      bar.style.width = Math.min(100, frac * 100) + "%";
+      val.textContent = text || human(bytes);
+    }
+
+    function render(step, animate){
+      timers.clear();
+
+      var scan = $("#dsaScan");
+      if (scan) scan.classList.remove("go");
+
+      pages.forEach(function(p, i){
+        var selected = !!SEL_SET[i];
+        p.classList.add("on");
+        p.classList.toggle("scanned", step >= 1);
+        p.classList.toggle("top", step >= 2 && selected);
+        p.classList.toggle("dim", step >= 2 && !selected);
+        p.classList.remove("reading");
+        p.classList.toggle("read", step >= 3 && step < 4 && selected);
+        p.classList.toggle("read", step >= 4 && selected);
+
+        var bars = p.querySelectorAll(".score b");
+        for (var j = 0; j < bars.length; j++) {
+          var h = 2;
+          if (step >= 1) {
+            var v = scoreAt(i, j);
+            if (selected) v = Math.min(1, v + 0.32);
+            h = 3 + Math.round(v * 15);
+          }
+          if (step >= 2 && !selected) h = Math.max(2, Math.round(h * 0.45));
+          bars[j].style.height = h + "px";
+          bars[j].style.background = (step >= 2 && selected)
+            ? "var(--orange)"
+            : (step >= 1 ? "var(--blue)" : "#233151");
+        }
+      });
+
+      var idxUnit = $("#dsaIndexer");
+      var topkUnit = $("#dsaTopk");
+      var attnUnit = $("#dsaAttn");
+      var outUnit = $("#dsaOut");
+      var qChip = $("#dsaQ");
+      if (idxUnit) idxUnit.classList.toggle("active", step >= 1);
+      if (topkUnit) topkUnit.classList.toggle("active", step >= 2);
+      if (attnUnit) attnUnit.classList.toggle("active", step >= 3);
+      if (outUnit) outUnit.classList.toggle("active", step >= 4);
+      if (qChip) qChip.classList.toggle("active", step >= 1);
+
+      var idxBytes = step >= 1 ? 16 * 128 * IDX_BYTES : 0;
+      var kvBytes = step >= 3 ? 4 * 128 * MAIN_BYTES : 0;
+      var total = idxBytes + kvBytes;
+
+      setMeter("#mIdx", "#vIdx", idxBytes, idxBytes / DENSE);
+      setMeter("#mKv", "#vKv", kvBytes, kvBytes / DENSE);
+      setMeter("#mTot", "#vTot", total, total / DENSE, Math.round(total / DENSE * 100) + "%");
+
+      var byteScan = $("#byteScan");
+      var byteMove = $("#byteMove");
+      if (byteScan) byteScan.textContent = step >= 1 ? "16 页 = 256 KB" : "—";
+      if (byteMove) byteMove.textContent = step >= 3 ? "4 页 = 576 KB" : "—";
+
+      if (animate && step === 0) {
+        pages.forEach(function(p, i){
+          p.classList.remove("on");
+          timers.add(function(){ p.classList.add("on"); }, 40 + i * 45);
+        });
+      }
+
+      if (animate && step === 1) {
+        pages.forEach(function(p){ p.classList.remove("scanned"); });
+        if (scan) {
+          void scan.offsetWidth;
+          scan.classList.add("go");
+        }
+        pages.forEach(function(p, i){
+          timers.add(function(){ p.classList.add("scanned"); }, 80 + i * 70);
+        });
+        timers.add(function(){ if (scan) scan.classList.remove("go"); }, 1700);
+      }
+
+      if (animate && step === 3) {
+        pages.forEach(function(p){ p.classList.remove("read"); });
+        SEL_LIST.forEach(function(idx, n){
+          timers.add(function(){
+            var p = pages[idx];
+            p.classList.add("reading");
+            flyChip(p, attnUnit, "P" + idx + " · 576d", "kv");
+            timers.add(function(){
+              p.classList.remove("reading");
+              p.classList.add("read");
+            }, 480);
+          }, 120 + n * 380);
+        });
+      }
+    }
+
+    var shortNames = ["写 KV", "打分", "Top-k", "搬运", "计算"];
+    var dots = $("#dsaDots");
+    if (dots) {
+      dots.innerHTML = shortNames.map(function(s, i){
+        return '<button data-i="' + i + '"><b>' + (i + 1) + "</b>" + s + "</button>";
+      }).join("");
+      $$("button", dots).forEach(function(b){
+        b.addEventListener("click", function(){ p.goto(Number(b.dataset.i)); });
+      });
+    }
+
+    var p = player({
+      count: 5,
+      render: render,
+      duration: function(i){ return [900, 1900, 1200, 2500, 2200][i]; },
+      onTick: function(i, playing){
+        var st = $("#dsaStatus");
+        if (st) st.textContent = "步骤 " + (i + 1) + " / 5 · " + (playing ? "播放中" : (i === 4 ? "已完成" : "已暂停"));
+        $$("#dsaDots button").forEach(function(b, j){ b.classList.toggle("on", j === i); });
+        var cap = $("#dsaCaption");
+        if (cap) cap.innerHTML = captions[i];
+        var playBtn = $("#dsaPlay");
+        if (playBtn) playBtn.classList.toggle("primary", !playing);
+      }
+    });
+
+    var bind = function(id, fn){
+      var el = $(id);
+      if (el) el.addEventListener("click", fn);
+    };
+    bind("#dsaPlay", function(){ p.play(); });
+    bind("#dsaPause", function(){ p.pause(); });
+    bind("#dsaNext", function(){ p.next(); });
+    bind("#dsaReset", function(){ p.reset(); });
+
+    p.reset();
+  })();
+
+  /* ============ 3. gather detail ============ */
+  (function initGather(){
+    /* logical pages */
+    var lp = $("#gLogicalPages");
+    if (lp) {
+      var h = "";
+      for (var i = 0; i < 8; i++) {
+        h += '<div class="lp' + (i === 7 ? " target" : "") + '" data-i="' + i + '">L' + i +
+             '<span style="float:right;color:#4c628c">' + (i * 128) + "</span></div>";
+      }
+      lp.innerHTML = h;
+    }
+
+    /* block table */
+    var bt = $("#gBt");
+    if (bt) {
+      var rows = [[5, 9], [6, 4], [7, 21], [8, 2], [9, 30]];
+      bt.innerHTML = rows.map(function(r){
+        return '<div class="bt-row" data-logical="' + r[0] + '"><span>L' + r[0] + "</span><em>→</em><span>P" + r[1] + "</span></div>";
+      }).join("");
+    }
+
+    /* physical rows */
+    var phys = $("#gPhys");
+    var HIT = [3, 57, 100];
+    if (phys) {
+      var cells = "";
+      for (var k = 0; k < 128; k++) {
+        cells += '<div class="cell" data-row="' + k + '" title="row ' + k + '"></div>';
+      }
+      phys.innerHTML = cells;
+    }
+    var cellEls = $$("#gPhys .cell");
+    var buf = $("#gBuf");
+    var timers = timerBag();
+
+    var caps = [
+      "<b>① 索引是逻辑位置。</b>top-k 给出的是 token 919 这样的序列位置，而不是 HBM 物理地址。" +
+        "它落在逻辑页 L7（token 896–1023）里。",
+      "<b>② 查 block_table。</b>paged KV 的逻辑页和物理页不连续，" +
+        "kernel 用 <code>block_table[7] = 21</code> 把 L7 映射到物理页 P21。",
+      "<b>③ 页内定位。</b>偏移 <code>row = 919 % 128 = 23</code>；" +
+        "图中示例命中 row 3 / 57 / 100，其余 125 行与本次 query 无关。",
+      "<b>④ 只搬命中的行。</b><code>sparse_block_size=1</code> 让 kernel 按 token 行 gather，" +
+        "三行进入 gather buffer，而不是整页 144 KB。实际带宽还会受随机访问效率影响。"
+    ];
+
+    function render(step, animate){
+      timers.clear();
+
+      $$("#gBt .bt-row").forEach(function(r){
+        r.classList.toggle("hit", step >= 1 && r.dataset.logical === "7");
+      });
+
+      cellEls.forEach(function(c, i){
+        var hit = HIT.indexOf(i) >= 0;
+        c.classList.toggle("hit", step >= 2 && hit);
+        c.classList.toggle("moved", step >= 3 && hit && !animate);
+      });
+
+      if (step >= 3) {
+        if (!animate) {
+          buf.innerHTML = HIT.map(function(r){ return '<span class="bchip">row ' + r + "</span>"; }).join("");
+        }
+      } else {
+        buf.innerHTML = '<span class="empty">空</span>';
+      }
+
+      if (step >= 2) {
+        var card = $("#gPhysCard");
+        if (card) card.style.borderColor = "rgba(255,171,74,.5)";
+      } else {
+        var card2 = $("#gPhysCard");
+        if (card2) card2.style.borderColor = "";
+      }
+
+      if (animate && step === 3) {
+        buf.innerHTML = "";
+        HIT.forEach(function(row, n){
+          timers.add(function(){
+            var c = cellEls[row];
+            if (!c) return;
+            c.classList.remove("moved");
+            c.classList.add("hit");
+            flyChip(c, buf, "row " + row, "tok");
+            timers.add(function(){
+              var chip = document.createElement("span");
+              chip.className = "bchip";
+              chip.textContent = "row " + row;
+              buf.appendChild(chip);
+              c.classList.add("moved");
+            }, 470);
+          }, 150 + n * 420);
+        });
+      }
+    }
+
+    var p = player({
+      count: 4,
+      render: render,
+      duration: function(i){ return [1500, 1500, 1700, 2700][i]; },
+      onTick: function(i, playing){
+        var st = $("#gStatus");
+        if (st) st.textContent = "步骤 " + (i + 1) + " / 4 · " + (playing ? "播放中" : (i === 3 ? "已完成" : "已暂停"));
+        var cap = $("#gCaption");
+        if (cap) cap.innerHTML = caps[i];
+        var playBtn = $("#gPlay");
+        if (playBtn) playBtn.classList.toggle("primary", !playing);
+      }
+    });
+
+    var bind = function(id, fn){
+      var el = $(id);
+      if (el) el.addEventListener("click", fn);
+    };
+    bind("#gPlay", function(){ p.play(); });
+    bind("#gPause", function(){ p.pause(); });
+    bind("#gNext", function(){ p.next(); });
+    bind("#gReset", function(){ p.reset(); });
+
+    p.reset();
+  })();
+
+  /* ============ 4. dashboard ============ */
+  (function initDash(){
+    var stops = [4096, 8192, 16384, 32768, 65536, 131072];
+    var slider = $("#lenSlider");
+    var tableBody = $("#numTable");
+    if (!slider || !tableBody) return;
+
+    function calc(L){
+      var dense = L * MAIN_BYTES;
+      var idx = L * IDX_BYTES;
+      var sparse = Math.min(L, TOPK) * MAIN_BYTES;
+      return {
+        L: L,
+        dense: dense,
+        idx: idx,
+        sparse: sparse,
+        dsa: idx + sparse,
+        ratio: (idx + sparse) / dense
+      };
+    }
+
+    function rows(){
+      return stops.map(function(L, i){
+        var c = calc(L);
+        return '<tr data-i="' + i + '"><td>' + (L / 1024) + "k</td>" +
+          "<td>" + mb(c.dense) + "</td>" +
+          "<td>" + mb(c.idx) + "</td>" +
+          "<td>" + mb(c.sparse) + "</td>" +
+          "<td>" + mb(c.dsa) + "</td>" +
+          "<td>" + (c.ratio * 100).toFixed(1) + "%</td>" +
+          "<td>" + (Math.min(1, TOPK / L) * 100).toFixed(1) + "%</td></tr>";
+      }).join("");
+    }
+
+    function render(i){
+      var c = calc(stops[i]);
+      var lenOut = $("#lenOut");
+      if (lenOut) lenOut.textContent = (c.L / 1024) + "k";
+
+      var barIdx = $("#barIdx");
+      var barKv = $("#barKv");
+      if (barIdx) barIdx.style.width = (c.idx / c.dense * 100) + "%";
+      if (barKv) barKv.style.width = (c.sparse / c.dense * 100) + "%";
+
+      var denseVal = $("#denseVal");
+      var dsaVal = $("#dsaVal");
+      if (denseVal) denseVal.textContent = mb(c.dense);
+      if (dsaVal) dsaVal.textContent = mb(c.dsa) + " · " + (c.ratio * 100).toFixed(1) + "%";
+
+      var statRatio = $("#statRatio");
+      if (statRatio) statRatio.textContent = (c.ratio * 100).toFixed(1) + "%";
+      var statRatioSub = $("#statRatioSub");
+      if (statRatioSub) statRatioSub.textContent = mb(c.dsa) + " / " + mb(c.dense);
+
+      var statIdx = $("#statIdx");
+      if (statIdx) statIdx.textContent = (c.idx / c.dense * 100).toFixed(1) + "%";
+      var statIdxSub = $("#statIdxSub");
+      if (statIdxSub) statIdxSub.textContent = mb(c.idx) + " · 全扫 L";
+
+      var statComp = $("#statComp");
+      if (statComp) statComp.textContent = (Math.min(1, TOPK / c.L) * 100).toFixed(1) + "%";
+
+      $$("tr", tableBody).forEach(function(tr, j){
+        tr.classList.toggle("on", j === i);
+      });
+    }
+
+    tableBody.innerHTML = rows();
+    slider.addEventListener("input", function(){
+      render(Number(slider.value));
+    });
+    render(Number(slider.value));
+  })();
+
+})();
+</script>
+</body>
+</html>
