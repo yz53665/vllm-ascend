@@ -151,6 +151,8 @@ class HardwareCapability(Enum):
     RUNTIME_CUSTOM_OPS = auto()
     # Allow C8 SFA decode-context parallelism with a replicated indexer.
     SFA_C8_DCP_REPLICATED_INDEXER = auto()
+    # Load the sparse KV offload host-side operators from the compiled extension.
+    SPARSE_KV_OFFLOAD = auto()
     # Legacy implementation selector: install the standard worker patch bundle.
     STANDARD_WORKER_PATCHES = auto()
     # Legacy implementation selector: install the standard Mamba platform patch.
@@ -279,6 +281,7 @@ _A3_CAPABILITIES = _STANDARD_CAPABILITIES | {
     HardwareCapability.GMM_DEQUANT_SITU_QUANT,
     HardwareCapability.MC2_FULLMESH_V2_COMM,
     HardwareCapability.RMS_NORM_CAST,
+    HardwareCapability.SPARSE_KV_OFFLOAD,
 }
 _DEFAULT_WORKER_CLS = "vllm_ascend.worker.worker.NPUWorker"
 _HARDWARE_PROFILES: Mapping[AscendDeviceType, HardwareProfile] = MappingProxyType(
@@ -377,6 +380,7 @@ _HARDWARE_PROFILES: Mapping[AscendDeviceType, HardwareProfile] = MappingProxyTyp
                     HardwareCapability.NPUGRAPH_EX,
                     HardwareCapability.STANDARD_MAMBA_PATCH,
                     HardwareCapability.STANDARD_WORKER_PATCHES,
+                    HardwareCapability.SPARSE_KV_OFFLOAD,
                     HardwareCapability.SWIGLU_OAI_MX_QUANT,
                     HardwareCapability.TRITON_BATCH_MEMCPY,
                     HardwareCapability.UNRESTRICTED_MLAPO,

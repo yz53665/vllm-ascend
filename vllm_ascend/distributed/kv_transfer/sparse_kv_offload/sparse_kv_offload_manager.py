@@ -32,7 +32,8 @@ from vllm.v1.utils import CpuGpuBuffer
 
 from vllm_ascend.ascend_config import SparseKVOffloadConfig, get_ascend_config
 from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.copy_sfa_topk_slots import copy_sfa_pool_capacity
-from vllm_ascend.utils import AscendDeviceType, enable_custom_op, get_ascend_device_type
+from vllm_ascend.utils import load_custom_ops_library
+from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_hardware_profile
 
 # Main BF16 cache:
 # [k_cache, v_cache, k_cache_cpu, v_cache_cpu, topk_buffer_k, topk_buffer_v].
@@ -93,14 +94,16 @@ def _sparse_kv_ops():
     global _SPARSE_KV_OFFLOAD_OPS
     if _SPARSE_KV_OFFLOAD_OPS is not None:
         return _SPARSE_KV_OFFLOAD_OPS
-    if not enable_custom_op():
-        raise RuntimeError("Sparse KV offload requires custom ops to be enabled.")
+    if not get_current_hardware_profile().supports(HardwareCapability.SPARSE_KV_OFFLOAD):
+        raise RuntimeError("Sparse KV offload is only supported on Atlas A3 and Ascend950.")
+    if not load_custom_ops_library():
+        raise RuntimeError("Sparse KV offload requires the vllm_ascend_C custom ops library to be loadable.")
 
     missing_ops = [name for name in _SPARSE_KV_OFFLOAD_OP_NAMES if not hasattr(torch.ops._C_ascend, name)]
     if missing_ops:
         raise RuntimeError(
             "Sparse KV offload requires _C_ascend sparse KV ops, "
-            f"missing={missing_ops}. Rebuild vllm_ascend_C with Atlas A3 support."
+            f"missing={missing_ops}. Rebuild vllm_ascend_C with Atlas A3/A5 support."
         )
     _SPARSE_KV_OFFLOAD_OPS = torch.ops._C_ascend
     return _SPARSE_KV_OFFLOAD_OPS
@@ -1790,8 +1793,8 @@ def init_sparse_kv_offload_manager(
 ):
     global _SPARSE_KV_OFFLOAD_MANAGER
     if _SPARSE_KV_OFFLOAD_MANAGER is None:
-        if get_ascend_device_type() != AscendDeviceType.A3:
-            raise RuntimeError("Sparse KV offload is only support on A3")
+        if not get_current_hardware_profile().supports(HardwareCapability.SPARSE_KV_OFFLOAD):
+            raise RuntimeError("Sparse KV offload is only supported on Atlas A3 and Ascend950.")
         _SPARSE_KV_OFFLOAD_MANAGER = SparseKVOffloadManager(
             vllm_config,
             kv_cache_config,

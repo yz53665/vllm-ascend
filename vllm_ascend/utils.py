@@ -603,6 +603,35 @@ def enable_custom_op():
     return _CUSTOM_OP_ENABLED
 
 
+def load_custom_ops_library() -> bool:
+    """Load the compiled ``vllm_ascend_C`` extension without changing the global custom-op policy.
+
+    Some features (e.g. sparse KV offload) need the ``_C_ascend`` operators on devices
+    where custom ops are otherwise disabled.
+    """
+    try:
+        if not torch.compiler.is_compiling():
+            bootstrap_custom_op_env()
+        # isort: off
+        import vllm_ascend.vllm_ascend_C  # type: ignore  # noqa: F401
+
+        # isort: on
+        return True
+    except ImportError as e:
+        # Prefer the extension's rpath for vendor op_api loading. Only fall back
+        # to mutating LD_LIBRARY_PATH when the import proves it is still needed.
+        if (not torch.compiler.is_compiling()) and "libcust_opapi.so" in str(e):
+            try:
+                bootstrap_custom_op_env(include_vendor_lib=True)
+                import vllm_ascend.vllm_ascend_C  # type: ignore  # noqa: F401
+
+                return True
+            except ImportError:
+                pass
+        logger.warning("Failed to load the vllm_ascend_C custom ops library. error=%s.", e)
+        return False
+
+
 def find_hccl_library() -> str:
     """
     We either use the library file specified by the `HCCL_SO_PATH`

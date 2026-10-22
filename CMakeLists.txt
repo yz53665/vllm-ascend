@@ -78,8 +78,8 @@ else()
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/aclnn_torch_adapter/*.cpp)
 endif()
 
-# Sparse KV cache offloading is currently supported on Atlas A3 only.
-if(SOC_VERSION MATCHES "ascend910_93.*")
+# Sparse KV cache offloading is supported on Atlas A3 and Ascend950.
+if(SOC_VERSION MATCHES "ascend910_93.*|ascend950")
   find_package(OpenMP REQUIRED)
 endif()
 
@@ -101,7 +101,7 @@ set(
 )
 
 pybind11_add_module(vllm_ascend_C ${VLLM_ASCEND_SRC})
-if(SOC_VERSION MATCHES "ascend910_93.*")
+if(SOC_VERSION MATCHES "ascend910_93.*|ascend950")
   target_compile_definitions(vllm_ascend_C PRIVATE VLLM_ASCEND_ENABLE_SPARSE_KV_OFFLOAD)
   target_link_libraries(vllm_ascend_C PRIVATE OpenMP::OpenMP_CXX)
 endif()
