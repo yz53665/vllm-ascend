@@ -1,0 +1,2691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MemFabric Hybrid · 架构与实现可视化</title>
+<style>
+  :root{
+    --bg:#060a12;
+    --bg2:#0a1120;
+    --panel:rgba(14,23,39,.82);
+    --panel2:rgba(10,17,30,.9);
+    --line:rgba(120,170,220,.14);
+    --line2:rgba(120,170,220,.26);
+    --text:#e6eefb;
+    --muted:#8fa3bf;
+    --dim:#5d7290;
+    --mint:#3ce6a8;
+    --cyan:#4cb8ff;
+    --violet:#8b7cff;
+    --gold:#ffc45c;
+    --rose:#ff8ea0;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:"PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --r:18px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:86px}
+  body{
+    margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    line-height:1.72;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
+    background:
+      radial-gradient(900px 620px at 12% -8%,rgba(60,230,168,.10),transparent 62%),
+      radial-gradient(820px 520px at 92% 6%,rgba(76,184,255,.10),transparent 62%),
+      radial-gradient(900px 700px at 50% 112%,rgba(139,124,255,.09),transparent 62%);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.26;
+    background-image:
+      linear-gradient(rgba(120,170,220,.055) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(120,170,220,.055) 1px,transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image:radial-gradient(ellipse at 50% 30%,#000 20%,transparent 78%);
+    mask-image:radial-gradient(ellipse at 50% 30%,#000 20%,transparent 78%);
+  }
+  ::selection{background:rgba(60,230,168,.28);color:#fff}
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,pre,.mono{font-family:var(--mono)}
+
+  /* progress + nav */
+  #progress{position:fixed;top:0;left:0;height:2px;width:0;z-index:80;
+    background:linear-gradient(90deg,var(--mint),var(--cyan),var(--violet));
+    box-shadow:0 0 14px rgba(60,230,168,.6)}
+  .nav{position:fixed;top:0;left:0;right:0;z-index:60;display:flex;align-items:center;gap:26px;
+    padding:12px 28px;background:rgba(6,10,18,.72);backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+  .brand-mark{width:30px;height:30px;border-radius:9px;position:relative;
+    background:linear-gradient(135deg,var(--mint),var(--cyan));
+    box-shadow:0 0 26px rgba(60,230,168,.35)}
+  .brand-mark::before,.brand-mark::after{content:"";position:absolute;border-radius:3px;background:#04121a}
+  .brand-mark::before{width:11px;height:11px;left:6px;top:6px}
+  .brand-mark::after{width:7px;height:7px;right:6px;bottom:6px;opacity:.75}
+  .brand span{font-size:14px}
+  .brand small{display:block;font-size:10px;color:var(--dim);font-weight:500;letter-spacing:1.6px}
+  .nav-links{display:flex;gap:4px;margin-left:auto;overflow-x:auto;scrollbar-width:none}
+  .nav-links::-webkit-scrollbar{display:none}
+  .nav-links a{color:var(--muted);font-size:13px;padding:7px 12px;border-radius:8px;white-space:nowrap;
+    transition:color .2s,background .2s}
+  .nav-links a:hover{color:var(--text);background:rgba(120,170,220,.08);text-decoration:none}
+  .nav-links a.active{color:var(--mint);background:rgba(60,230,168,.10)}
+
+  main{position:relative}
+  section{max-width:1200px;margin:0 auto;padding:88px 24px}
+  .sec-head{max-width:860px;margin-bottom:38px}
+  .eyebrow{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:2.4px;
+    color:var(--dim);font-family:var(--mono);text-transform:uppercase}
+  .eyebrow .num{color:var(--mint);border:1px solid rgba(60,230,168,.35);border-radius:6px;
+    padding:1px 7px;letter-spacing:1px;background:rgba(60,230,168,.06)}
+  h2{font-size:clamp(28px,3.6vw,42px);line-height:1.2;letter-spacing:-.8px;margin:14px 0 14px}
+  .lead{color:var(--muted);font-size:15.5px;margin:0;max-width:800px}
+  .muted{color:var(--muted)}
+  .dim{color:var(--dim)}
+  .mono{font-family:var(--mono)}
+
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .75s ease,transform .75s cubic-bezier(.2,.8,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  /* hero */
+  .hero{position:relative;min-height:100vh;display:flex;align-items:center;padding:128px 24px 72px;overflow:hidden}
+  #fabricCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.62}
+  .hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:220px;pointer-events:none;
+    background:linear-gradient(180deg,transparent,var(--bg))}
+  .hero-inner{position:relative;z-index:2;max-width:1200px;margin:0 auto;width:100%}
+  .hero .eyebrow{color:#9fc0b4}
+  .hero h1{font-size:clamp(40px,6.4vw,76px);line-height:1.08;letter-spacing:-2.4px;margin:20px 0 22px;max-width:880px}
+  .grad{background:linear-gradient(100deg,var(--mint),var(--cyan) 52%,var(--violet));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .hero p.lead{font-size:17px;line-height:1.85;max-width:720px;color:#a9bcd4}
+  .hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 32px}
+  .tag{font-size:12px;color:#a9c6bd;border:1px solid rgba(60,230,168,.22);background:rgba(60,230,168,.05);
+    padding:5px 11px;border-radius:999px}
+  .tag.blue{color:#b6dcff;border-color:rgba(76,184,255,.25);background:rgba(76,184,255,.06)}
+  .tag.violet{color:#cfc8ff;border-color:rgba(139,124,255,.25);background:rgba(139,124,255,.06)}
+  .hero-cta{display:flex;flex-wrap:wrap;gap:12px}
+  .btn{display:inline-flex;align-items:center;gap:8px;border-radius:11px;padding:11px 18px;font-size:14px;
+    font-weight:600;cursor:pointer;border:1px solid var(--line2);color:var(--text);background:rgba(255,255,255,.03);
+    transition:transform .2s,border-color .2s,background .2s;font-family:var(--sans)}
+  .btn:hover{transform:translateY(-2px);border-color:rgba(60,230,168,.5);background:rgba(60,230,168,.07);text-decoration:none}
+  .btn.primary{background:linear-gradient(135deg,rgba(60,230,168,.95),rgba(76,184,255,.9));color:#04121a;border:none;
+    box-shadow:0 10px 34px -12px rgba(60,230,168,.65)}
+  .btn.small{padding:7px 12px;font-size:12px;border-radius:9px}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:58px;border:1px solid var(--line);
+    border-radius:16px;overflow:hidden;background:var(--line);max-width:900px}
+  .stat{background:rgba(8,14,24,.78);padding:18px 20px}
+  .stat b{display:block;font-size:24px;letter-spacing:-.5px;font-family:var(--mono);
+    background:linear-gradient(90deg,#e9fff7,var(--mint));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .stat small{display:block;color:var(--dim);font-size:11px;margin-top:3px;letter-spacing:.4px}
+  .scroll-hint{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:2;
+    color:var(--dim);font-size:11px;letter-spacing:2px;font-family:var(--mono);text-align:center}
+  .scroll-hint::after{content:"";display:block;width:1px;height:34px;margin:8px auto 0;
+    background:linear-gradient(var(--mint),transparent);animation:drop 1.8s ease-in-out infinite}
+  @keyframes drop{0%,100%{opacity:.25;transform:scaleY(.5);transform-origin:top}50%{opacity:1;transform:scaleY(1)}}
+
+  /* cards */
+  .grid{display:grid;gap:18px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .card{position:relative;background:linear-gradient(180deg,rgba(16,26,44,.82),rgba(9,16,28,.88));
+    border:1px solid var(--line);border-radius:var(--r);padding:22px 22px 20px;overflow:hidden;
+    transition:transform .3s,border-color .3s,box-shadow .3s}
+  .card::before{content:"";position:absolute;top:0;left:18px;right:18px;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(60,230,168,.55),transparent);opacity:.5}
+  .card:hover{transform:translateY(-4px);border-color:rgba(120,170,220,.3);
+    box-shadow:0 24px 60px -30px rgba(0,0,0,.9)}
+  .card .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;margin-bottom:14px;
+    background:rgba(60,230,168,.08);border:1px solid rgba(60,230,168,.22)}
+  .card .ico svg{width:17px;height:17px;stroke:var(--mint);fill:none;stroke-width:1.6}
+  .card h3{margin:0 0 8px;font-size:16.5px;letter-spacing:.1px}
+  .card p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.75}
+  .card .kbd{font-family:var(--mono);font-size:11.5px;color:var(--mint);background:rgba(60,230,168,.07);
+    border:1px solid rgba(60,230,168,.18);padding:1px 6px;border-radius:5px}
+  .card.blue .ico{background:rgba(76,184,255,.08);border-color:rgba(76,184,255,.24)}
+  .card.blue .ico svg{stroke:var(--cyan)}
+  .card.blue .kbd{color:var(--cyan);background:rgba(76,184,255,.07);border-color:rgba(76,184,255,.2)}
+  .card.violet .ico{background:rgba(139,124,255,.08);border-color:rgba(139,124,255,.24)}
+  .card.violet .ico svg{stroke:var(--violet)}
+  .card.gold .ico{background:rgba(255,196,92,.08);border-color:rgba(255,196,92,.24)}
+  .card.gold .ico svg{stroke:var(--gold)}
+
+  /* glossary */
+  .glossary{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .gl{font-size:12px;color:var(--muted);border:1px solid var(--line);background:rgba(255,255,255,.02);
+    padding:6px 11px;border-radius:9px}
+  .gl b{color:var(--text);font-family:var(--mono);font-weight:600;margin-right:5px}
+
+  /* architecture */
+  .arch-wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:26px;align-items:start}
+  .arch-stack{display:flex;flex-direction:column;gap:8px}
+  .layer{position:relative;border:1px solid var(--line);border-radius:16px;padding:17px 19px;cursor:pointer;
+    background:linear-gradient(180deg,rgba(16,26,44,.86),rgba(9,16,28,.9));
+    transition:transform .3s,border-color .3s,box-shadow .3s,background .3s}
+  .layer:hover{transform:translateX(4px);border-color:var(--line2)}
+  .layer.active{border-color:rgba(60,230,168,.55);transform:translateX(7px);
+    box-shadow:0 0 0 1px rgba(60,230,168,.18),0 22px 54px -30px rgba(60,230,168,.45);
+    background:linear-gradient(180deg,rgba(20,36,48,.92),rgba(9,18,28,.92))}
+  .layer-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .layer-idx{font:600 10px var(--mono);letter-spacing:1px;color:var(--mint);
+    border:1px solid rgba(60,230,168,.35);border-radius:5px;padding:1px 6px;background:rgba(60,230,168,.06)}
+  .layer h3{margin:0;font-size:15.5px}
+  .layer-tag{margin-left:auto;font:10px var(--mono);letter-spacing:1.4px;color:var(--dim)}
+  .layer p{margin:7px 0 10px;color:var(--muted);font-size:12.5px;line-height:1.65}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font:11px var(--mono);color:#a9c3dd;background:rgba(76,184,255,.06);border:1px solid rgba(76,184,255,.16);
+    padding:2px 7px;border-radius:6px;white-space:nowrap}
+  .arch-conn{height:20px;display:flex;align-items:center;gap:10px;padding-left:22px;color:var(--dim);
+    font:10px var(--mono);letter-spacing:1px}
+  .arch-conn::before{content:"";width:1px;height:20px;background:linear-gradient(transparent,var(--line2),transparent)}
+  .detail{position:sticky;top:96px;background:linear-gradient(180deg,rgba(14,23,39,.9),rgba(8,14,24,.94));
+    border:1px solid var(--line);border-radius:var(--r);padding:24px;min-height:430px}
+  .detail .chip{display:inline-block;margin-bottom:10px}
+  .detail h3{margin:0 0 8px;font-size:21px;letter-spacing:-.3px}
+  .detail p{margin:0 0 16px;color:var(--muted);font-size:13.5px}
+  .detail-stats{font:11.5px var(--mono);color:var(--mint);border:1px dashed rgba(60,230,168,.28);
+    background:rgba(60,230,168,.04);padding:7px 10px;border-radius:8px;margin-bottom:16px}
+  .detail-list{margin:0 0 18px;padding-left:17px;color:#becfe4;font-size:13px}
+  .detail-list li{margin:5px 0}
+  .file-links{display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:14px}
+  .file-links a{font:12px var(--mono);color:var(--cyan)}
+  .file-links a span{color:var(--dim);margin-left:6px;font-family:var(--sans)}
+
+  /* gva */
+  .gva-card{background:linear-gradient(180deg,rgba(14,23,39,.86),rgba(8,14,24,.92));border:1px solid var(--line);
+    border-radius:var(--r);padding:24px}
+  .gva-controls{display:grid;grid-template-columns:auto auto 1fr;gap:20px;align-items:center;margin-bottom:22px}
+  .ctrl-label{display:block;font-size:11px;color:var(--dim);letter-spacing:1px;margin-bottom:6px;font-family:var(--mono)}
+  select{background:#0a1322;color:var(--text);border:1px solid var(--line2);border-radius:8px;
+    padding:7px 10px;font-family:var(--mono);font-size:12.5px;outline:none}
+  .rankbtns{display:flex;gap:6px}
+  .rankbtn{width:36px;height:34px;border-radius:8px;border:1px solid var(--line2);background:transparent;
+    color:var(--muted);font-family:var(--mono);font-size:12.5px;cursor:pointer;transition:.2s}
+  .rankbtn:hover{border-color:var(--cyan);color:var(--text)}
+  .rankbtn.active{background:rgba(76,184,255,.14);border-color:var(--cyan);color:#dff1ff}
+  input[type=range]{width:100%;accent-color:var(--gold);cursor:pointer}
+  .gva-views{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .gva-view{border:1px solid var(--line);border-radius:14px;padding:14px 14px 16px;background:rgba(6,11,20,.55)}
+  .gva-view-head{display:flex;align-items:center;gap:8px;margin-bottom:18px;font-size:12.5px;color:var(--muted)}
+  .rankbadge{font:11px var(--mono);color:var(--mint);border:1px solid rgba(60,230,168,.3);
+    background:rgba(60,230,168,.07);padding:1px 7px;border-radius:5px}
+  .gva-view-head .hint{margin-left:auto;font-size:10.5px;color:var(--dim)}
+  .gva-strip{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;height:66px;
+    border-radius:11px;background:#0a1322;border:1px solid var(--line);margin-bottom:12px}
+  .seg{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font:10.5px var(--mono);color:var(--dim);border-right:1px dashed rgba(120,170,220,.12);transition:.3s;overflow:hidden}
+  .seg:last-child{border-right:0}
+  .seg b{font-size:10.5px;font-weight:600;letter-spacing:.4px}
+  .seg small{font-size:9px;color:var(--dim);margin-top:2px}
+  .seg.local{background:linear-gradient(180deg,rgba(60,230,168,.17),rgba(60,230,168,.04));color:#bfffe4}
+  .seg.local small{color:#7cc9ac}
+  .seg.remote{background:linear-gradient(180deg,rgba(76,184,255,.13),rgba(76,184,255,.03));color:#cfe9ff}
+  .seg.target{box-shadow:inset 0 0 0 1px rgba(255,196,92,.6)}
+  .gva-marker{position:absolute;top:-12px;bottom:-12px;width:2px;background:var(--gold);z-index:3;
+    box-shadow:0 0 15px rgba(255,196,92,.9);transition:left .45s cubic-bezier(.2,.8,.2,1)}
+  .gva-marker::before{content:"GVA";position:absolute;top:-19px;left:50%;transform:translateX(-50%);
+    font:9px var(--mono);color:var(--gold);letter-spacing:1px}
+  .gva-formula{font:11.5px var(--mono);color:#a8c0d9;background:rgba(255,255,255,.025);
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-x:auto;white-space:nowrap}
+  .gva-formula em{font-style:normal;color:var(--gold)}
+  .res-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:18px}
+  .res{background:rgba(255,255,255,.022);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .res small{display:block;color:var(--dim);font-size:10.5px;letter-spacing:.5px;margin-bottom:3px}
+  .res b{font:13px var(--mono);color:var(--text);font-weight:600;word-break:break-all}
+  .res.wide{grid-column:span 2}
+  .res b.mint{color:var(--mint)}
+  .res b.gold{color:var(--gold)}
+  .note{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--muted);
+    border-left:2px solid rgba(255,196,92,.55);background:rgba(255,196,92,.04);padding:10px 13px;border-radius:0 8px 8px 0;margin-top:16px}
+  .note b{color:var(--gold);font-weight:600}
+
+  .const-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:16px}
+  .const-table th,.const-table td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .const-table th{color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:1px;font-family:var(--mono)}
+  .const-table td:first-child{font-family:var(--mono);color:#cfe0f5;white-space:nowrap}
+  .const-table td:nth-child(2){font-family:var(--mono);color:var(--mint);white-space:nowrap}
+  .const-table td{color:var(--muted)}
+
+  /* data plane */
+  .dp-wrap{display:grid;grid-template-columns:1.45fr .85fr;gap:22px;align-items:start}
+  .dp-stage{border:1px solid var(--line);border-radius:var(--r);background:
+    radial-gradient(700px 300px at 50% 0%,rgba(76,184,255,.06),transparent 70%),rgba(8,14,24,.82);padding:14px}
+  .dp-svg{width:100%;height:auto;display:block}
+  .dp-svg .box{fill:rgba(13,22,38,.92);stroke:rgba(120,170,220,.2);stroke-width:1}
+  .dp-svg .hbm{fill:rgba(60,230,168,.09);stroke:rgba(60,230,168,.42);stroke-width:1.1}
+  .dp-svg .dram{fill:rgba(76,184,255,.09);stroke:rgba(76,184,255,.38);stroke-width:1.1}
+  .dp-svg .netbox{fill:rgba(139,124,255,.08);stroke:rgba(139,124,255,.4);stroke-width:1;stroke-dasharray:5 6}
+  .dp-svg .nic{fill:rgba(120,170,220,.05);stroke:rgba(120,170,220,.22);stroke-width:1}
+  .dp-svg .title{fill:#e3eefc;font-size:13px;font-weight:600;font-family:var(--sans)}
+  .dp-svg .label{fill:#cfe0f5;font-size:12px;font-family:var(--sans)}
+  .dp-svg .muted-t{fill:#7d93b3;font-size:10.5px;font-family:var(--mono)}
+  .dp-svg .flowline{fill:none;stroke:rgba(255,196,92,.42);stroke-width:2;stroke-dasharray:7 9;
+    animation:dash 1.15s linear infinite}
+  @keyframes dash{to{stroke-dashoffset:-32}}
+  .dp-svg .active{filter:drop-shadow(0 0 10px rgba(60,230,168,.6))}
+  .dp-side{display:flex;flex-direction:column;gap:14px}
+  .dp-btns{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .dp-btn{text-align:left;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.02);
+    color:var(--muted);font-size:12px;cursor:pointer;transition:.2s;font-family:var(--sans)}
+  .dp-btn:hover{border-color:var(--line2);color:var(--text)}
+  .dp-btn.active{border-color:rgba(255,196,92,.55);background:rgba(255,196,92,.07);color:#ffe6b8}
+  .dp-info{border:1px solid var(--line);border-radius:14px;background:rgba(10,17,30,.7);padding:16px}
+  .dp-info h3{margin:0 0 4px;font-size:15px}
+  .dp-info .route{font:11px var(--mono);color:var(--gold);margin-bottom:10px;word-break:break-all}
+  .dp-info p{margin:0 0 12px;color:var(--muted);font-size:12.5px}
+  .dp-metrics{display:flex;gap:8px;flex-wrap:wrap}
+  .metric{font:11px var(--mono);border:1px solid var(--line);border-radius:7px;padding:4px 8px;color:#b9cbe2}
+  .metric b{color:var(--mint);font-weight:600}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--dim);margin-top:12px}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+  /* sequence */
+  .seq-wrap{border:1px solid var(--line);border-radius:var(--r);background:
+    radial-gradient(800px 300px at 50% 0,rgba(139,124,255,.06),transparent 70%),rgba(8,14,24,.8);overflow:hidden}
+  .seq-bar{display:flex;align-items:center;gap:9px;padding:13px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .seq-bar .step{font:11.5px var(--mono);color:var(--mint);margin-right:auto;letter-spacing:.5px}
+  .seq-scroll{overflow-x:auto;padding:8px 10px 4px}
+  .seq-svg{width:100%;min-width:960px;height:auto;display:block}
+  .seq-svg .phase-band{fill:rgba(76,184,255,.035);stroke:rgba(120,170,220,.08);stroke-width:1}
+  .seq-svg .phase-band.alt{fill:rgba(139,124,255,.04)}
+  .seq-svg .phase-txt{fill:#5d7290;font-size:10px;font-family:var(--mono);letter-spacing:1px}
+  .seq-svg .lifeline{stroke:rgba(120,170,220,.18);stroke-width:1;stroke-dasharray:4 6}
+  .seq-svg .actor rect{fill:rgba(14,23,39,.95);stroke:rgba(120,170,220,.28);stroke-width:1}
+  .seq-svg .actor text{fill:#cfe0f5;font-size:11.5px;font-family:var(--sans)}
+  .seq-svg .actor.speaking rect{stroke:var(--mint);stroke-width:1.4;filter:drop-shadow(0 0 8px rgba(60,230,168,.35))}
+  .seq-svg .msg-line{fill:none;stroke:#4cb8ff;stroke-width:1.35}
+  .seq-svg .seq-msg.ret .msg-line{stroke:#7fa6cf;stroke-dasharray:5 5}
+  .seq-svg .seq-msg.async .msg-line{stroke:#8b7cff;stroke-dasharray:3 4}
+  .seq-svg .seq-msg.self .msg-line{stroke:#3ce6a8}
+  .seq-svg .msg-txt{fill:#a9bdd6;font-size:10.6px;font-family:var(--sans);paint-order:stroke;
+    stroke:#060a12;stroke-width:4px;stroke-linejoin:round}
+  .seq-svg .seq-msg{opacity:0;transition:opacity .38s ease}
+  .seq-svg .seq-msg.on{opacity:1}
+  .seq-svg .seq-msg.active .msg-txt{fill:#fff}
+  .seq-svg .seq-msg.active .msg-line{stroke:var(--mint);stroke-width:2;
+    filter:drop-shadow(0 0 5px rgba(60,230,168,.65))}
+
+  /* mesh schematic */
+  .mesh-figure{margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r);padding:10px 14px 4px;
+    background:radial-gradient(700px 260px at 50% 0,rgba(76,184,255,.05),transparent 70%),rgba(8,14,24,.7);
+    overflow-x:auto}
+  .mesh-figure svg{width:100%;min-width:900px;height:auto;display:block}
+  .mesh-figure .m-box{fill:rgba(14,23,39,.92);stroke:rgba(120,170,220,.28);stroke-width:1}
+  .mesh-figure .m-box.int{stroke:rgba(60,230,168,.32)}
+  .mesh-figure .m-title{fill:#e3eefc;font:600 13px var(--sans);text-anchor:middle}
+  .mesh-figure .m-sub{fill:#8fa3bf;font:10px var(--mono);text-anchor:middle}
+  .mesh-figure .m-phase{fill:#5d7290;font:10px var(--mono);letter-spacing:1.2px;text-anchor:middle}
+  .mesh-figure .m-link{stroke:#4cb8ff;stroke-width:1.3;fill:none}
+  .mesh-figure .m-link.flow{stroke-dasharray:5 6;animation:meshDash 1.6s linear infinite}
+  .mesh-figure .m-data{stroke:#3ce6a8;stroke-width:1.2;fill:none;stroke-dasharray:4 5}
+  .mesh-figure .m-msg{fill:#a9bdd6;font:10px var(--sans);paint-order:stroke;stroke:#060a12;stroke-width:4px;
+    stroke-linejoin:round}
+  .mesh-figure .m-rank-t{fill:#e3eefc;font:600 12px var(--mono);text-anchor:middle}
+  .mesh-figure .m-rank-s{fill:#8fa3bf;font:10px var(--mono);text-anchor:middle}
+  .mesh-figure .m-state{fill:var(--mint);font:9.5px var(--mono);letter-spacing:.6px}
+  .mesh-figure .m-cap{fill:#5d7290;font:10.5px var(--sans);text-anchor:middle}
+  .mesh-figure .m-dot{fill:#3ce6a8}
+  @keyframes meshDash{to{stroke-dashoffset:-22}}
+
+  .cmp{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:12.8px;line-height:1.75}
+  .cmp li{margin-bottom:6px}
+  .cmp li:last-child{margin-bottom:0}
+  .cmp-anim{margin-top:18px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+    background:radial-gradient(700px 240px at 50% 0,rgba(60,230,168,.05),transparent 70%),rgba(8,14,24,.7)}
+  .cmp-bar{display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--line);
+    flex-wrap:wrap}
+  .cmp-stat{font:11.5px var(--mono);color:var(--muted);letter-spacing:.2px}
+  .cmp-anim svg{width:100%;height:auto;display:block}
+  .cmp-anim .lane-t{fill:#e3eefc;font:600 13px var(--sans)}
+  .cmp-anim .lane-s{fill:#5d7290;font:10px var(--mono)}
+  .cmp-anim .grid{stroke:rgba(120,170,220,.10);stroke-width:1}
+  .cmp-anim .grid.base{stroke:rgba(120,170,220,.28)}
+  .cmp-anim .axis{fill:#5d7290;font:9.5px var(--mono);text-anchor:middle}
+  .cmp-anim .bar-t{fill:#cfe3f8;font:9.5px var(--mono);text-anchor:middle}
+  .cmp-anim .rl{fill:#93a8c4;font:10px var(--mono);text-anchor:end}
+  .cmp-anim .bar{fill:rgba(76,184,255,.14);stroke:rgba(76,184,255,.32);stroke-width:1;
+    transition:fill .18s,stroke .18s}
+  .cmp-anim .bar.on{fill:rgba(76,184,255,.55);stroke:rgba(76,184,255,.95)}
+  .cmp-anim .bar.ok{fill:rgba(76,184,255,.22);stroke:rgba(76,184,255,.55)}
+  .cmp-anim .bar.b{fill:rgba(60,230,168,.14);stroke:rgba(60,230,168,.32)}
+  .cmp-anim .bar.b.on{fill:rgba(60,230,168,.50);stroke:rgba(60,230,168,.95)}
+  .cmp-anim .bar.b.ok{fill:rgba(60,230,168,.20);stroke:rgba(60,230,168,.50)}
+  .cmp-anim .lane-tag{fill:#5d7290;font:9.5px var(--mono);letter-spacing:1px}
+  .seq-lead{color:var(--muted);font-size:12.8px;line-height:1.75;margin:0 0 12px;max-width:920px}
+  .dp-seq{margin-top:0;margin-bottom:4px}
+  .dp-seq .seq-svg{min-width:1000px}
+
+  /* global code structure */
+  .gc-figure{margin:0 0 24px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+    background:radial-gradient(760px 300px at 50% 0,rgba(76,184,255,.05),transparent 70%),rgba(8,14,24,.72)}
+  .gc-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);
+    flex-wrap:wrap}
+  .gc-title{font:600 12px var(--mono);letter-spacing:1.2px;color:var(--mint)}
+  .gc-cap{font-size:11.8px;color:var(--muted);margin-left:auto;text-align:right}
+  .gc-scroll{overflow-x:auto;padding:6px 10px 8px}
+  .gc-svg{width:100%;min-width:920px;height:auto;display:block}
+  .gc-svg .layer{fill:rgba(120,170,220,.025);stroke:rgba(120,170,220,.10);stroke-width:1;transition:.2s}
+  .gc-svg .layer.hot{fill:rgba(76,184,255,.055);stroke:rgba(76,184,255,.30)}
+  .gc-svg .lx{fill:var(--mint);font:600 11px var(--mono);letter-spacing:1px}
+  .gc-svg .ln{fill:#7d93b3;font:9.5px var(--sans)}
+  .gc-svg .box{fill:rgba(13,22,38,.95);stroke:rgba(120,170,220,.26);stroke-width:1;transition:.18s}
+  .gc-svg .gc-box{cursor:pointer}
+  .gc-svg .gc-box.hot .box{fill:rgba(60,230,168,.10);stroke:rgba(60,230,168,.85);stroke-width:1.4;
+    filter:drop-shadow(0 0 8px rgba(60,230,168,.30))}
+  .gc-svg .bt{fill:#dce9f8;font:12px var(--sans)}
+  .gc-svg .bs{fill:#7d93b3;font:9.5px var(--mono)}
+  .gc-svg .gap-lbl{fill:#5d7290;font:9px var(--mono)}
+  .gc-svg .flow{stroke:rgba(76,184,255,.42);stroke-width:1.2;fill:none}
+  .gc-svg .flow.dash{stroke-dasharray:4 4}
+  .sub-head{margin:30px 0 4px;font-size:16px;display:flex;align-items:center;gap:10px}
+  .sub-head::before{content:"";width:3px;height:15px;border-radius:2px;
+    background:linear-gradient(180deg,var(--mint),var(--cyan))}
+
+  /* state machine */
+  .sm-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .sm-panel{border:1px solid var(--line);border-radius:var(--r);background:rgba(10,17,30,.72);padding:20px}
+  .sm-panel h3{margin:0 0 4px;font-size:15px}
+  .sm-panel .sub{font-size:11.5px;color:var(--dim);margin-bottom:18px}
+  .sm-row{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+  .state{font:11px var(--mono);padding:9px 11px;border-radius:9px;border:1px solid var(--line);
+    color:var(--dim);background:rgba(255,255,255,.02);transition:.3s;white-space:nowrap}
+  .state.done{border-color:rgba(60,230,168,.3);color:#9ad9bf}
+  .state.on{border-color:var(--mint);color:#e2fff4;background:rgba(60,230,168,.13);
+    box-shadow:0 0 24px rgba(60,230,168,.26);transform:translateY(-2px)}
+  .sm-arrow{color:rgba(120,170,220,.35);font-size:16px}
+  .sm-note{margin-top:16px;font-size:11.5px;color:var(--dim);border-top:1px dashed var(--line);padding-top:12px}
+  .sm-log{margin-top:18px;border:1px solid var(--line);border-radius:12px;background:#070d18;padding:12px 14px;
+    min-height:104px;font:11.5px var(--mono);color:#93b3cf;white-space:pre-wrap}
+  .sm-log .ok{color:var(--mint)}
+  .sm-log .warn{color:var(--gold)}
+
+  /* flow */
+  .flow{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:8px}
+  .flow-step{position:relative;border:1px solid var(--line);border-radius:13px;background:rgba(10,17,30,.72);
+    padding:14px 13px;transition:.3s;min-height:150px}
+  .flow-step .fi{font:10px var(--mono);color:var(--dim);letter-spacing:1px}
+  .flow-step h4{margin:6px 0 5px;font-size:13px}
+  .flow-step p{margin:0;font-size:11.5px;color:var(--muted);line-height:1.6}
+  .flow-step code{font-size:10.5px;color:#9ec6e8;word-break:break-all}
+  .flow-step::after{content:"›";position:absolute;right:-11px;top:50%;transform:translateY(-50%);
+    color:rgba(120,170,220,.35);font-size:20px;z-index:2}
+  .flow-step:last-child::after{display:none}
+  .flow-step.hot{border-color:rgba(60,230,168,.55);background:rgba(60,230,168,.07);
+    box-shadow:0 0 0 1px rgba(60,230,168,.12),0 16px 40px -28px rgba(60,230,168,.6);transform:translateY(-3px)}
+  .flow-step.hot .fi{color:var(--mint)}
+  .flow-note{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:12px 15px;
+    font-size:12.5px;color:var(--muted);background:rgba(255,255,255,.02)}
+  .flow-note b{color:var(--mint)}
+  .matrix{width:100%;border-collapse:collapse;font-size:12px;margin-top:18px}
+  .matrix th,.matrix td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .matrix th{font:500 10.5px var(--mono);color:var(--dim);letter-spacing:.8px}
+  .matrix td{color:var(--muted)}
+  .matrix td:first-child{font-family:var(--mono);color:#cfe0f5;white-space:nowrap}
+  .matrix td:last-child{font-family:var(--mono);color:var(--cyan);white-space:nowrap}
+
+  /* offload */
+  .off-side{display:flex;flex-direction:column;gap:14px}
+  .off-side h3{margin:0;font-size:16px}
+  .off-side p{margin:0;color:var(--muted);font-size:13px}
+  .off-scenes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .scene{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:rgba(255,255,255,.02)}
+  .scene b{display:block;font:11px var(--mono);color:var(--mint);margin-bottom:3px}
+  .scene span{font-size:11.5px;color:var(--muted)}
+  pre.code{background:#070d18;border:1px solid var(--line);border-radius:11px;padding:13px 14px;
+    overflow:auto;font-size:11.5px;line-height:1.65;color:#9ec6e8;margin:0}
+  pre.code .c{color:#5d7290}
+  pre.code .k{color:var(--mint)}
+
+  /* code map */
+  .code-grid{display:grid;grid-template-columns:.82fr 1.18fr;gap:24px;align-items:start}
+  .tree-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(8,14,24,.72);padding:14px 12px;
+    max-height:640px;overflow:auto}
+  .tree,.tree ul{list-style:none;margin:0;padding:0}
+  .tree ul{margin-left:13px;border-left:1px dashed rgba(120,170,220,.16);padding-left:7px}
+  .tree button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    background:none;border:0;color:var(--muted);padding:7px 9px;border-radius:8px;cursor:pointer;
+    font:12px var(--mono);text-align:left;transition:.2s}
+  .tree button:hover{background:rgba(76,184,255,.07);color:#e2eefc}
+  .tree button.active{background:rgba(60,230,168,.09);color:#d9fff0;box-shadow:inset 0 0 0 1px rgba(60,230,168,.18)}
+  .tree .meta{font-size:10px;color:var(--dim);white-space:nowrap}
+  .tree .root{font-weight:600;color:#cfe0f5}
+  .code-detail{border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,rgba(14,23,39,.88),rgba(8,14,24,.9));
+    padding:24px;min-height:520px}
+  .code-detail h3{margin:0 0 7px;font-size:20px;letter-spacing:-.2px}
+  .code-detail .stats{display:block;max-width:none;margin:0 0 14px;background:none;border:0;
+    border-bottom:1px dashed var(--line);border-radius:0;overflow:visible;font:11.5px var(--mono);
+    color:var(--mint);padding-bottom:12px;letter-spacing:.3px}
+  .code-detail p{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .code-detail ul{margin:0 0 16px;padding-left:17px;color:#becfe4;font-size:12.8px}
+  .code-detail li{margin:5px 0}
+  .code-detail .files{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
+  .code-detail .files a{font:11.5px var(--mono);color:var(--cyan);padding:5px 8px;border:1px solid var(--line);
+    border-radius:7px;background:rgba(255,255,255,.02);overflow:hidden;text-overflow:ellipsis}
+  .code-detail .files a:hover{background:rgba(76,184,255,.07);text-decoration:none}
+  .kpis{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .kpi{font:10.5px var(--mono);color:#b9cbe2;border:1px solid var(--line);border-radius:7px;padding:4px 8px}
+
+  /* perf */
+  .perf-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(8,14,24,.75);padding:24px}
+  .bar-row{display:grid;grid-template-columns:104px 1fr 100px;gap:14px;align-items:center;margin:15px 0}
+  .bar-row .name{font:11.5px var(--mono);color:#cfe0f5;white-space:nowrap}
+  .bar{height:10px;border-radius:7px;background:rgba(255,255,255,.055);overflow:hidden;position:relative}
+  .bar i{display:block;height:100%;width:0;border-radius:7px;
+    background:linear-gradient(90deg,var(--mint),var(--cyan));transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+  .bar.gold i{background:linear-gradient(90deg,var(--gold),#ff9d5c)}
+  .bar.violet i{background:linear-gradient(90deg,var(--violet),var(--cyan))}
+  .bar-row .val{font:12px var(--mono);color:var(--mint);text-align:right}
+  .axis{display:flex;justify-content:space-between;color:var(--dim);font:10px var(--mono);margin-left:118px;margin-right:114px;
+    border-top:1px dashed var(--line);padding-top:6px}
+  .perf-note{font-size:11.5px;color:var(--dim);margin-top:16px;line-height:1.7}
+
+  /* build */
+  .build-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .cmd{position:relative;background:#070d18;border:1px solid var(--line);border-radius:12px;padding:15px 16px;
+    overflow:auto}
+  .cmd code{font-size:12px;color:#9ec6e8;white-space:pre}
+  .cmd .copy{position:absolute;top:9px;right:9px}
+  .build-card{border:1px solid var(--line);border-radius:var(--r);background:rgba(10,17,30,.7);padding:20px}
+  .build-card h3{margin:0 0 8px;font-size:15px}
+  .build-card p{margin:0 0 13px;color:var(--muted);font-size:12.5px}
+  .build-card .chips{gap:6px}
+
+  /* footer */
+  footer{border-top:1px solid var(--line);margin-top:40px;padding:45px 24px 60px;color:var(--dim);font-size:12px}
+  .foot{max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}
+  .foot b{color:var(--muted);font-weight:600}
+  .foot a{color:var(--muted)}
+  .foot a:hover{color:var(--cyan)}
+
+  @media(max-width:1020px){
+    .arch-wrap,.dp-wrap,.code-grid{grid-template-columns:1fr}
+    .detail{position:relative;top:0}
+    .g3{grid-template-columns:repeat(2,1fr)}
+    .flow{grid-template-columns:repeat(3,1fr)}
+    .flow-step::after{display:none}
+    .gva-controls{grid-template-columns:1fr 1fr}
+    .gva-controls .range-wrap{grid-column:span 2}
+    .sm-grid{grid-template-columns:1fr}
+  }
+  @media(max-width:760px){
+    section{padding:68px 18px}
+    .nav{padding:10px 16px;gap:14px}
+    .brand small{display:none}
+    .nav-links a{padding:6px 9px;font-size:12px}
+    .hero{padding-top:108px}
+    .stats{grid-template-columns:1fr 1fr}
+    .g3,.g2,.build-grid{grid-template-columns:1fr}
+    .gva-views{grid-template-columns:1fr}
+    .res-grid{grid-template-columns:1fr 1fr}
+    .res.wide{grid-column:span 2}
+    .flow{grid-template-columns:1fr 1fr}
+    .dp-btns{grid-template-columns:1fr}
+    .bar-row{grid-template-columns:82px 1fr 82px}
+    .axis{margin-left:96px;margin-right:96px}
+    .code-detail .files{grid-template-columns:1fr}
+    .off-scenes{grid-template-columns:1fr}
+    .seq-svg{min-width:900px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+    .reveal{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="nav">
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div>
+      <span>MemFabric Hybrid</span>
+      <small>ARCHITECTURE EXPLORER</small>
+    </div>
+  </div>
+  <nav class="nav-links">
+    <a href="#overview" class="active">概览</a>
+    <a href="#architecture">分层结构</a>
+    <a href="#gva">统一编址</a>
+    <a href="#dataplane">数据面</a>
+    <a href="#control">组网与时序</a>
+    <a href="#statemachine">状态机</a>
+    <a href="#dispatch">拷贝调度</a>
+    <a href="#offload">Offload</a>
+    <a href="#code">代码结构</a>
+    <a href="#perf">性能</a>
+    <a href="#build">构建验证</a>
+  </nav>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero" id="top">
+    <canvas id="fabricCanvas" aria-hidden="true"></canvas>
+    <div class="hero-inner">
+      <div class="eyebrow reveal">MEMFABRIC HYBRID · 源码导读 · v1.5.0</div>
+      <h1 class="reveal">HBM 与 DRAM 池化<br>与 <span class="grad">全局统一编址</span></h1>
+      <p class="lead reveal">
+        面向昇腾超节点与服务器的内存池化软件。参与节点经 <b>GVA（Global Virtual Address）</b> 统一编址，
+        业务以内存读写语义访问本机或远端内存；北向只暴露地址与拷贝接口，南向按链路能力选择 SDMA、
+        Device RDMA/URMA/UBoE 或 Host RDMA/TCP/SHM。
+      </p>
+      <div class="hero-tags reveal">
+        <span class="tag">Ascend NPU</span>
+        <span class="tag blue">UB / RoCE</span>
+        <span class="tag">GVA 统一编址</span>
+        <span class="tag violet">C / Python</span>
+        <span class="tag">Mulan PSL v2</span>
+      </div>
+      <div class="hero-cta reveal">
+        <a class="btn primary" href="#overview">开始阅读 <span aria-hidden="true">↓</span></a>
+        <a class="btn" href="#code">查看代码地图</a>
+      </div>
+      <div class="stats reveal">
+        <div class="stat"><b>1024</b><small>MAX RANKS / GROUP</small></div>
+        <div class="stat"><b>128 TB</b><small>GVM VA POOL</small></div>
+        <div class="stat"><b>110 GB/s</b><small>RH2D · A3 UB 1.0</small></div>
+        <div class="stat"><b>94.5k</b><small>LINES · src/ C/C++</small></div>
+      </div>
+    </div>
+    <div class="scroll-hint">SCROLL</div>
+  </section>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">01</span> OVERVIEW</div>
+      <h2>定位与核心能力</h2>
+      <p class="lead">
+        HBM 容量有限，DRAM 带宽较低，跨节点访问需要额外的通信编程。MemFabric 将各 rank 的 HBM 与 DRAM
+        注册为逻辑连续、进程间视图一致的全局窗口，业务通过一个地址和一次拷贝调用完成访问，
+        无需感知数据所在节点与承载链路。
+      </p>
+    </div>
+
+    <div class="grid g3">
+      <article class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg></div>
+        <h3>异构内存池化</h3>
+        <p>每个 rank 注册本地 <span class="kbd">HBM</span> 与 <span class="kbd">DRAM</span>，按 rank 拼成对称窗口。BM 面向大容量池化，SHM 面向算子级共享，TRANS 面向已注册内存的点对点传输。</p>
+      </article>
+      <article class="card blue reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><circle cx="18" cy="12" r="2"/><circle cx="20" cy="17" r="2"/></svg></div>
+        <h3>全局地址视图</h3>
+        <p>GVA 起始地址与布局在所有进程中一致，按 rank 线性排布。地址本身包含归属信息：<span class="kbd">(gva − base) / maxSize</span> 即远端 rank，无需索引表。</p>
+      </article>
+      <article class="card violet reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M8 7h8M8 17h8"/><path d="M5 12h14"/><path d="m15 9 3 3-3 3"/></svg></div>
+        <h3>xcopy 内存语义接口</h3>
+        <p>北向提供 <span class="kbd">smem_bm_copy</span> / <span class="kbd">write</span> / <span class="kbd">read</span>，支持 L2G、G2L、G2H、H2G、G2G 以及批量与异步调用。方向判定与引擎选择由库内完成。</p>
+      </article>
+      <article class="card gold reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 18V9m5 9V5m5 13v-7m5 7V7"/></svg></div>
+        <h3>插件化数据传输</h3>
+        <p>同一套接口支持 Device SDMA、Device RDMA/URMA/UBoE 与 Host RDMA/TCP/SHM。按可达性与 tag 策略排序，单个算子失败后自动尝试下一个。</p>
+      </article>
+      <article class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3>控制面与数据面分离</h3>
+        <p>Config Store 与 Group Manager 只负责成员管理、元数据交换和建链；数据搬运由单边读写完成，远端 CPU 不参与，也不设置中转缓冲区。</p>
+      </article>
+      <article class="card blue reveal">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v5c0 5 3.5 7.7 8 9 4.5-1.3 8-4 8-9V7l-8-4Z"/><path d="m8.5 12 2.2 2.2 4.8-4.8"/></svg></div>
+        <h3>弹性与高可用</h3>
+        <p>支持 autoRanking、动态 join/leave 与本地内存按需扩展。TCP 模式由 rank0 兼任 Store；etcd 模式基于租约选主，leader 变更可回调上层。</p>
+      </article>
+    </div>
+
+    <div class="glossary reveal">
+      <span class="gl"><b>GVA</b>Global Virtual Address，全局统一虚拟地址</span>
+      <span class="gl"><b>BM</b>Big Memory，大容量池化语义</span>
+      <span class="gl"><b>L</b>Local（本机 HBM/DRAM）</span>
+      <span class="gl"><b>G</b>Global（全局窗口）</span>
+      <span class="gl"><b>RH</b>Remote Host，跨机 DRAM</span>
+      <span class="gl"><b>D2RH</b>本机 HBM → 跨机 DRAM</span>
+      <span class="gl"><b>RH2D</b>跨机 DRAM → 本机 HBM</span>
+      <span class="gl"><b>one-sided</b>单边读写，远端 CPU 不参与</span>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section id="architecture">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">02</span> LAYERS</div>
+      <h2>分层结构</h2>
+      <p class="lead">
+        语义层不实现数据面，数据面不管理成员关系。smem 将 BM / TRANS / SHM / Offload 四类语义翻译为 hybm 的统一模型；
+        hybm 负责地址、内存段、传输与算子；config store 与 acc_links 构成控制面；应用层只使用北向 API。
+        点击任一图层查看职责与源码位置。
+      </p>
+    </div>
+
+    <div class="arch-wrap reveal">
+      <div class="arch-stack" id="archStack">
+        <article class="layer active" data-layer="app">
+          <div class="layer-top"><span class="layer-idx">L4</span><h3>应用与示例层</h3><span class="layer-tag">CONSUMERS</span></div>
+          <p>官方应用、样例与基准测试，覆盖推理、推荐与集合通信场景。</p>
+          <div class="chips"><span class="chip">ZBAL</span><span class="chip">TensorRTL</span><span class="chip">examples</span><span class="chip">benchmark</span></div>
+        </article>
+        <div class="arch-conn">北向 C / Python API</div>
+        <article class="layer" data-layer="smem">
+          <div class="layer-top"><span class="layer-idx">L3</span><h3>语义与接口层 · smem</h3><span class="layer-tag">libmf_smem.so</span></div>
+          <p>BM / TRANS / SHM / Offload 四类语义，以及句柄与生命周期管理、参数校验、错误码和 Python 绑定。</p>
+          <div class="chips"><span class="chip">smem_bm</span><span class="chip">smem_trans</span><span class="chip">smem_shm</span><span class="chip">config_store</span><span class="chip">group manager</span></div>
+        </article>
+        <div class="arch-conn">hybm_* 内部接口</div>
+        <article class="layer" data-layer="hybm">
+          <div class="layer-top"><span class="layer-idx">L2</span><h3>内存与传输核心 · hybm</h3><span class="layer-tag">libmf_hybm_core.so</span></div>
+          <p>全局地址空间、内存段、Exchange Info、导入映射、传输连接与数据算子。</p>
+          <div class="chips"><span class="chip">entity</span><span class="chip">mm / VA</span><span class="chip">transport</span><span class="chip">data_operation</span><span class="chip">ts_engine</span><span class="chip">under_api</span></div>
+        </article>
+        <div class="arch-conn">控制协议 / 系统调用 / 驱动 API</div>
+        <article class="layer" data-layer="infra">
+          <div class="layer-top"><span class="layer-idx">L1</span><h3>控制面与基础设施</h3><span class="layer-tag">CROSS-CUTTING</span></div>
+          <p>成员与元数据、TCP/HTTP 控制通道、TLS、HA、性能打点，以及 ACL / HAL / HCCP / HCOM 驱动接口。</p>
+          <div class="chips"><span class="chip">TcpConfigStore</span><span class="chip">etcd backend</span><span class="chip">GroupManager</span><span class="chip">acc_links</span><span class="chip">ptracer</span></div>
+        </article>
+      </div>
+
+      <aside class="detail" id="archDetail" aria-live="polite"></aside>
+    </div>
+
+    <div class="note reveal">
+      <span><b>分层依据：</b>BM / TRANS / SHM 的差异在于内存组织方式与访问权限，地址翻译、建链与单边读写是共性能力。
+      共性下沉到 hybm 后，新增语义只需组合现有能力，新增链路只需实现 TransportManager 与 DataOperator 两个抽象。</span>
+    </div>
+  </section>
+
+  <!-- GVA -->
+  <section id="gva">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">03</span> ADDRESSING</div>
+      <h2>GVA 全局统一编址</h2>
+      <p class="lead">
+        每个 rank 的贡献空间位于线性地址表的固定槽位：<span class="mono">GVA = base + rank × maxSize + offset</span>。
+        同一 GVA 在所有进程中映射到同一块物理内存，地址落在哪个 rank 窗口即表示数据归属。
+        调整下方偏移量与目标 rank，查看地址计算与访问方式。
+      </p>
+    </div>
+
+    <div class="gva-card reveal">
+      <div class="gva-controls">
+        <div>
+          <label class="ctrl-label" for="gvaLocalRank">本机 RANK</label>
+          <select id="gvaLocalRank">
+            <option value="0">rank 0</option>
+            <option value="1">rank 1</option>
+            <option value="2">rank 2</option>
+            <option value="3">rank 3</option>
+          </select>
+        </div>
+        <div>
+          <span class="ctrl-label">访问目标 RANK</span>
+          <div class="rankbtns" id="gvaTargetRanks">
+            <button class="rankbtn" data-rank="0">0</button>
+            <button class="rankbtn active" data-rank="1">1</button>
+            <button class="rankbtn" data-rank="2">2</button>
+            <button class="rankbtn" data-rank="3">3</button>
+          </div>
+        </div>
+        <div class="range-wrap">
+          <label class="ctrl-label" for="gvaOffset">窗口内偏移 <span id="gvaOffsetLabel">35%</span></label>
+          <input id="gvaOffset" type="range" min="0" max="100" value="35">
+        </div>
+      </div>
+
+      <div class="gva-views" id="gvaViews"></div>
+
+      <div class="res-grid" id="gvaResult"></div>
+
+      <div class="note">
+        <span><b>不变量：</b>所有进程的 GVA 起始地址、按 rank 排列的顺序与窗口大小一致。本地访问时 GVA 翻译为本地 LVA；
+        跨机访问时由传输引擎使用对端注册的内存键完成单边读写。</span>
+      </div>
+
+      <table class="const-table">
+        <thead><tr><th>常量 / 区域</th><th>取值</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>HYBM_DEVICE_VA_START</td><td>0x100000000000</td><td>NPU 设备地址空间起点（16 TB）</td></tr>
+          <tr><td>HYBM_DEVICE_VA_SIZE</td><td>0x80000000000</td><td>设备地址空间范围（8 TB）</td></tr>
+          <tr><td>HYBM_GLOBAL_GVM_START_ADDR</td><td>0x280040000000</td><td>全局 GVM 物理起点（40 TB + 1 GB，规避底层问题）</td></tr>
+          <tr><td>HYBM_GVM_MAX_POOL_SIZE</td><td>128 &lt;&lt; 40</td><td>常规 GVM 区上限（128 TB）</td></tr>
+          <tr><td>HYBM_56BITS_GVA_START</td><td>64 &lt;&lt; 50</td><td>总地址空间超 32 TB 时启用的 56 位 GVA 区（64 PB 起）</td></tr>
+          <tr><td>HYBM_TRANS_GVA_START</td><td>1 &lt;&lt; 60</td><td>TRANS 注册内存使用的独立 GVA 区</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- DATA PLANE -->
+  <section id="dataplane">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">04</span> DATA PLANE</div>
+      <h2>数据面访问路径</h2>
+      <p class="lead">
+        D 表示 Device（HBM），RH 表示 Remote Host（跨机 DRAM），H 表示本机 DRAM。选择方向后，图中显示数据经过的内存与互联节点，
+        右侧给出该方向使用的引擎与实测带宽。
+      </p>
+    </div>
+
+    <div class="dp-wrap reveal">
+      <div class="dp-stage">
+        <svg class="dp-svg" viewBox="0 0 1000 420" role="img" aria-label="跨节点内存访问路径示意图">
+          <rect class="box" x="24" y="30" width="350" height="350" rx="20"/>
+          <text class="title" x="48" y="62">节点 A · rank 0</text>
+          <g id="node-hbmA">
+            <rect class="hbm" x="48" y="82" width="302" height="92" rx="12"/>
+            <text class="label" x="64" y="110">HBM · Device VA</text>
+            <text class="muted-t" x="64" y="132">0x1000_0000_0000 起</text>
+            <text class="muted-t" x="64" y="151">窗口 = maxHbmSize</text>
+          </g>
+          <rect class="nic" x="48" y="196" width="302" height="44" rx="10"/>
+          <text class="muted-t" x="64" y="223">NIC / UB / RoCE</text>
+          <g id="node-dramA">
+            <rect class="dram" x="48" y="262" width="302" height="92" rx="12"/>
+            <text class="label" x="64" y="290">DRAM · GVM 窗口</text>
+            <text class="muted-t" x="64" y="312">0x2800_4000_0000 起</text>
+            <text class="muted-t" x="64" y="331">窗口 = maxDramSize</text>
+          </g>
+
+          <rect class="box" x="626" y="30" width="350" height="350" rx="20"/>
+          <text class="title" x="650" y="62">节点 B · rank 1</text>
+          <g id="node-hbmB">
+            <rect class="hbm" x="650" y="82" width="302" height="92" rx="12"/>
+            <text class="label" x="666" y="110">HBM · Device VA</text>
+            <text class="muted-t" x="666" y="132">同一张 GVA 表</text>
+            <text class="muted-t" x="666" y="151">rank 1 窗口</text>
+          </g>
+          <rect class="nic" x="650" y="196" width="302" height="44" rx="10"/>
+          <text class="muted-t" x="666" y="223">NIC / UB / RoCE</text>
+          <g id="node-dramB">
+            <rect class="dram" x="650" y="262" width="302" height="92" rx="12"/>
+            <text class="label" x="666" y="290">DRAM · GVM 窗口</text>
+            <text class="muted-t" x="666" y="312">对端注册内存键</text>
+            <text class="muted-t" x="666" y="331">单边访问目标</text>
+          </g>
+
+          <rect class="netbox" x="404" y="146" width="192" height="128" rx="18"/>
+          <text class="label" x="500" y="190" text-anchor="middle">跨机互联</text>
+          <text class="muted-t" x="500" y="214" text-anchor="middle">UB / RoCE / TCP</text>
+          <text class="muted-t" x="500" y="236" text-anchor="middle">one-sided read / write</text>
+
+          <path id="dpFlowPath" class="flowline" d="M 230 128 C 470 70, 530 330, 700 308"/>
+          <circle id="dpGlow" r="13" fill="rgba(255,196,92,.16)"/>
+          <circle id="dpPacket" r="4.5" fill="#ffc45c"/>
+          <text id="dpPathLabel" class="muted-t" x="500" y="398" text-anchor="middle">选择右侧的一种访问方向</text>
+        </svg>
+        <div class="legend">
+          <span><i style="background:rgba(60,230,168,.6)"></i>HBM / Device</span>
+          <span><i style="background:rgba(76,184,255,.6)"></i>DRAM / GVM</span>
+          <span><i style="background:rgba(139,124,255,.6)"></i>互联网络</span>
+          <span><i style="background:#ffc45c"></i>数据包</span>
+        </div>
+      </div>
+
+      <aside class="dp-side">
+        <div class="dp-btns" id="dpBtns">
+          <button class="dp-btn" data-scen="local">L2G 本机 HBM → 全局</button>
+          <button class="dp-btn" data-scen="d2rh">D2RH 本机 HBM → 远端 DRAM</button>
+          <button class="dp-btn" data-scen="rh2d">RH2D 远端 DRAM → 本机 HBM</button>
+          <button class="dp-btn active" data-scen="d2d">RD2D 远端 HBM → 本机 HBM</button>
+          <button class="dp-btn" data-scen="h2h">H2H 远端 DRAM → 本机 DRAM</button>
+        </div>
+        <div class="dp-info">
+          <h3 id="dpTitle">RD2D · 远端 HBM 到本机 HBM</h3>
+          <div class="route" id="dpRoute">远端 rank 1 HBM → 本机 rank 0 HBM</div>
+          <p id="dpDesc">设备侧单边读：本机发起，按对端内存键直接读取远端 HBM，经 UB/RoCE 返回本机，再落盘到本地 HBM。</p>
+          <div class="dp-metrics">
+            <span class="metric">引擎 <b id="dpEngine">Device URMA / RDMA</b></span>
+            <span class="metric">实测 <b id="dpBw">166.47 GB/s</b></span>
+            <span class="metric">CPU <b>不参与</b></span>
+          </div>
+        </div>
+        <div class="note">
+          <span><b>单边语义：</b>数据面仅交换内存键与地址，远端不执行 recv，也不产生中断处理。
+          跨机拷贝的编程模型与本地 memcpy 一致，且不引入中转缓冲区。</span>
+        </div>
+      </aside>
+    </div>
+
+    <h3 class="sub-head reveal">L2G：本机 HBM 拷贝到全局地址</h3>
+    <p class="seq-lead reveal">
+      src 与 dst 均落在本 rank 的 HBM 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_DEVICE。调用链不经过传输层：
+      算子链中只有 SDMA，搬运在本地 stream 上完成，同步返回即表示数据对后续算子可见。
+    </p>
+    <div class="seq-wrap dp-seq reveal">
+      <div class="seq-bar">
+        <span class="step" id="l2gStep">0 / 14</span>
+        <button class="btn small" id="l2gPrev">上一步</button>
+        <button class="btn small primary" id="l2gPlay">播放</button>
+        <button class="btn small" id="l2gNext">下一步</button>
+        <button class="btn small" id="l2gReset">重置</button>
+      </div>
+      <div class="seq-scroll">
+        <svg class="seq-svg" id="l2gSvg" role="img" aria-label="L2G 本机 HBM 拷贝时序图"></svg>
+      </div>
+    </div>
+
+    <h3 class="sub-head reveal">D2RH：本机 HBM 单边写入远端 DRAM</h3>
+    <p class="seq-lead reveal">
+      dst 落在远端 rank 的 host 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_HOST。算子链选中 Device URMA：
+      本端提交写请求并等待完成事件，远端仅提供已注册的内存键与地址，CPU 不参与数据搬运。
+    </p>
+    <div class="seq-wrap dp-seq reveal">
+      <div class="seq-bar">
+        <span class="step" id="d2rhStep">0 / 17</span>
+        <button class="btn small" id="d2rhPrev">上一步</button>
+        <button class="btn small primary" id="d2rhPlay">播放</button>
+        <button class="btn small" id="d2rhNext">下一步</button>
+        <button class="btn small" id="d2rhReset">重置</button>
+      </div>
+      <div class="seq-scroll">
+        <svg class="seq-svg" id="d2rhSvg" role="img" aria-label="D2RH 本机 HBM 写入远端 DRAM 时序图"></svg>
+      </div>
+    </div>
+
+    <div class="note reveal">
+      <span><b>测试条件：</b>数据来自 README 的昇腾 A3 超节点测试（DRAM 与 HBM 池化，UB 1.0，单 DIE + 单 CPU，
+      单次 1–2 GB，1 GB/s = 1000³ B/s）。A2 服务器可通过 Device RoCE 获得同等的跨机访问能力，具体数值取决于硬件与拓扑。</span>
+    </div>
+  </section>
+
+  <!-- CONTROL PLANE -->
+  <section id="control">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">05</span> CONTROL PLANE</div>
+      <h2>BM 初始化、组网与拷贝时序</h2>
+      <p class="lead">
+        控制面完成三项工作：进程互发现（Config Store）、交换 Entity 与 Slice 元数据（Exchange Info）、
+        按链路状态机建链（Group Manager）。准备完成后才进入数据面调用。逐步播放查看调用链。
+      </p>
+    </div>
+
+    <h3 class="sub-head reveal">组网示意图</h3>
+    <div class="mesh-figure reveal">
+      <svg viewBox="0 0 1000 470" role="img" aria-label="组网示意图：Config Store、Group Manager、Transport 与各 rank 的关系">
+        <defs>
+          <marker id="mArrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4cb8ff"/></marker>
+          <marker id="mArrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3ce6a8"/></marker>
+        </defs>
+
+        <text class="m-phase" x="165" y="24">① 注册</text>
+        <text class="m-phase" x="500" y="24">② 元数据交换</text>
+        <text class="m-phase" x="835" y="24">③ 建链</text>
+
+        <rect class="m-box" x="50" y="40" width="230" height="88" rx="10"/>
+        <text class="m-title" x="165" y="66">Config Store</text>
+        <text class="m-sub" x="165" y="86">TCP（rank0 兼任） / etcd</text>
+        <text class="m-sub" x="165" y="104">rankId · worldSize · KV</text>
+
+        <rect class="m-box int" x="380" y="40" width="240" height="88" rx="10"/>
+        <text class="m-title" x="500" y="66">Group Manager</text>
+        <text class="m-sub" x="500" y="86">rank 表 · 有向链路状态</text>
+        <text class="m-sub" x="500" y="104">CHECKED_IN → ACTIVE</text>
+
+        <rect class="m-box" x="720" y="40" width="230" height="88" rx="10"/>
+        <text class="m-title" x="835" y="66">Transport</text>
+        <text class="m-sub" x="835" y="86">HCOM / RDMA / URMA / UBoE</text>
+        <text class="m-sub" x="835" y="104">QP · 内存键 · 连接</text>
+
+        <line class="m-link" x1="280" y1="84" x2="372" y2="84" marker-end="url(#mArrowB)" marker-start="url(#mArrowB)"/>
+        <text class="m-msg" x="326" y="74" text-anchor="middle">成员 / KV</text>
+        <line class="m-link" x1="620" y1="84" x2="712" y2="84" marker-end="url(#mArrowB)" marker-start="url(#mArrowB)"/>
+        <text class="m-msg" x="666" y="74" text-anchor="middle">建链请求</text>
+
+        <path class="m-link flow" d="M145 260 L500 134" marker-end="url(#mArrowB)"/>
+        <path class="m-link flow" d="M385 260 L500 134" marker-end="url(#mArrowB)"/>
+        <path class="m-link flow" d="M625 260 L500 134" marker-end="url(#mArrowB)"/>
+        <path class="m-link flow" d="M865 260 L500 134" marker-end="url(#mArrowB)"/>
+        <text class="m-msg" x="236" y="214">join：entity + slice</text>
+
+        <g>
+          <rect class="m-box" x="40" y="260" width="210" height="140" rx="12"/>
+          <text class="m-rank-t" x="145" y="288">rank 0</text>
+          <text class="m-rank-s" x="145" y="312">NIC 10.0.0.0 · QP/QPN</text>
+          <text class="m-rank-s" x="145" y="334">HBM slice · GVA · memKey</text>
+          <text class="m-rank-s" x="145" y="356">DRAM slice · GVA · memKey</text>
+          <circle class="m-dot" cx="58" cy="378" r="3.5"/>
+          <text class="m-state" x="68" y="382">ACTIVE</text>
+        </g>
+        <g>
+          <rect class="m-box" x="280" y="260" width="210" height="140" rx="12"/>
+          <text class="m-rank-t" x="385" y="288">rank 1</text>
+          <text class="m-rank-s" x="385" y="312">NIC 10.0.0.1 · QP/QPN</text>
+          <text class="m-rank-s" x="385" y="334">HBM slice · GVA · memKey</text>
+          <text class="m-rank-s" x="385" y="356">DRAM slice · GVA · memKey</text>
+          <circle class="m-dot" cx="298" cy="378" r="3.5"/>
+          <text class="m-state" x="308" y="382">ACTIVE</text>
+        </g>
+        <g>
+          <rect class="m-box" x="520" y="260" width="210" height="140" rx="12"/>
+          <text class="m-rank-t" x="625" y="288">rank 2</text>
+          <text class="m-rank-s" x="625" y="312">NIC 10.0.0.2 · QP/QPN</text>
+          <text class="m-rank-s" x="625" y="334">HBM slice · GVA · memKey</text>
+          <text class="m-rank-s" x="625" y="356">DRAM slice · GVA · memKey</text>
+          <circle class="m-dot" cx="538" cy="378" r="3.5"/>
+          <text class="m-state" x="548" y="382">ACTIVE</text>
+        </g>
+        <g>
+          <rect class="m-box" x="760" y="260" width="210" height="140" rx="12"/>
+          <text class="m-rank-t" x="865" y="288">rank 3</text>
+          <text class="m-rank-s" x="865" y="312">NIC 10.0.0.3 · QP/QPN</text>
+          <text class="m-rank-s" x="865" y="334">HBM slice · GVA · memKey</text>
+          <text class="m-rank-s" x="865" y="356">DRAM slice · GVA · memKey</text>
+          <circle class="m-dot" cx="778" cy="378" r="3.5"/>
+          <text class="m-state" x="788" y="382">ACTIVE</text>
+        </g>
+
+        <line class="m-data" x1="250" y1="340" x2="280" y2="340" marker-end="url(#mArrowG)" marker-start="url(#mArrowG)"/>
+        <line class="m-data" x1="490" y1="340" x2="520" y2="340" marker-end="url(#mArrowG)" marker-start="url(#mArrowG)"/>
+        <line class="m-data" x1="730" y1="340" x2="760" y2="340" marker-end="url(#mArrowG)" marker-start="url(#mArrowG)"/>
+
+        <text class="m-cap" x="500" y="432">虚线：控制消息经 Store / Group Manager 传递　　绿线：建链后 rank 之间单边读写，不经过控制面</text>
+      </svg>
+    </div>
+
+    <h3 class="sub-head reveal">部署位置</h3>
+    <div class="grid g3 reveal">
+      <article class="card">
+        <h3>rank 0 进程（TCP 模式）</h3>
+        <div class="chips">
+          <span class="chip">Store Server</span><span class="chip">GM Server</span>
+          <span class="chip">Store Client</span><span class="chip">GM Client</span><span class="chip">Transport</span>
+        </div>
+        <p><span class="kbd">SmemTcpConfigStore</span> 以 <span class="kbd">CSM_BOTH</span> 启动，服务端与客户端在同一进程；
+        <span class="kbd">SmemGroupManagerServer</span> 作为服务端组件在此进程内维护 rank 表与链路状态，并监听
+        <span class="mono">storeUrl</span> 的 ip:port。配置 autoRanking 时，由 <span class="kbd">RacingForStoreServer</span>
+        竞争决定由哪个 rank 启动服务端。</p>
+      </article>
+      <article class="card blue">
+        <h3>rank 1..N 进程</h3>
+        <div class="chips">
+          <span class="chip">Store Client</span><span class="chip">GM Client</span><span class="chip">Transport</span>
+        </div>
+        <p>仅以 <span class="kbd">CSM_CLIENT</span> 启动，通过 TCP 连接 rank0。Group Manager 客户端状态机与
+        <span class="kbd">hybm</span> Transport 均在本进程内；join、扩展内存、leave 都是发往 rank0 的请求。
+        TCP 模式下 rank0 退出即控制面不可用。</p>
+      </article>
+      <article class="card gold">
+        <h3>etcd 模式</h3>
+        <div class="chips">
+          <span class="chip">etcd 集群</span><span class="chip">HaConfigStore</span><span class="chip">Leader Server</span>
+        </div>
+        <p>etcd 是外部独立集群，保存 leader 选举结果与状态快照。各 rank 进程内运行 <span class="kbd">HaConfigStore</span>；
+        抢到租约的 rank 在自身进程内启动 TCP Server 与 <span class="kbd">SmemGroupManagerServer</span>，
+        其余 rank 作为 follower 连接该 leader。leader 失效后重新选主，并从 etcd 恢复 rank 与链路状态。</p>
+      </article>
+    </div>
+
+    <div class="note reveal">
+      <span><b>Transport 不集中部署：</b>每个 rank 进程内的 hybm entity 持有一个 TransportManager，负责本 rank 的建链与收发。
+      链路是 rank 之间的直连（HCOM / RDMA / URMA / UBoE），控制面只负责交换地址、内存键与连接状态。</span>
+    </div>
+
+    <h3 class="sub-head reveal">初始化与拷贝时序</h3>
+    <div class="seq-wrap reveal">
+      <div class="seq-bar">
+        <span class="step" id="seqStep">0 / 22</span>
+        <button class="btn small" id="seqPrev">上一步</button>
+        <button class="btn small primary" id="seqPlay">播放</button>
+        <button class="btn small" id="seqNext">下一步</button>
+        <button class="btn small" id="seqReset">重置</button>
+      </div>
+      <div class="seq-scroll">
+        <svg class="seq-svg" id="seqSvg" role="img" aria-label="BM 初始化、组网与数据拷贝时序图"></svg>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:18px">
+      <article class="card reveal">
+        <h3>Exchange Info 的内容</h3>
+        <p>Entity 级信息包含 rankId、NIC 地址与传输私有数据（QP / URMA 信息）；Slice 级信息包含 GVA、大小与传输内存键。
+        两者经 Config Store 的 KV 与 Group Manager 广播到相关 rank。</p>
+      </article>
+      <article class="card blue reveal">
+        <h3>Import 与 mmap</h3>
+        <p>导入交换信息后，hybm 在各内存段登记 GVA 到对端窗口的映射，并调用 HAL 完成地址映射；随后按 rank 建立传输连接。
+        映射完成后，对端 GVA 可直接参与本进程寻址。</p>
+      </article>
+      <article class="card gold reveal">
+        <h3>PROMOTE_TO_ACTIVE 的作用</h3>
+        <p>join 并非登记即返回。服务端需将链路推进至 CONNECTED 后才把 rank 置为 ACTIVE，
+        因此 join 返回时数据面已可用。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- STATE MACHINE -->
+  <section id="statemachine">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">06</span> STATE MACHINE</div>
+      <h2>组网状态机</h2>
+      <p class="lead">
+        Group Manager 维护两类状态：rank 生命周期（IDLE → CHECKED_IN → ACTIVE）与有向链路状态
+        （IDLE → EXCHANGING → EXCHANGED → CONNECTING → CONNECTED）。服务端推进状态，客户端通过回调执行导入、映射与建链。
+      </p>
+    </div>
+
+    <div class="sm-grid reveal">
+      <div class="sm-panel">
+        <h3>Rank 生命周期</h3>
+        <div class="sub">server 侧：CheckIn / Checkout / ResetRankState</div>
+        <div class="sm-row">
+          <span class="state" data-sm="rank" data-s="IDLE">IDLE</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="rank" data-s="CHECKED_IN">CHECKED_IN</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="rank" data-s="ACTIVE">ACTIVE</span>
+        </div>
+        <div class="sm-note">IDLE：不在组内；CHECKED_IN：信息已登记、尚未接受连接；ACTIVE：在线可访问。Checkout 或断链会回到 IDLE。</div>
+      </div>
+      <div class="sm-panel">
+        <h3>有向链路状态</h3>
+        <div class="sub">srcRank → dstRank：白名单交换与连接建立</div>
+        <div class="sm-row">
+          <span class="state" data-sm="link" data-s="IDLE">IDLE</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="link" data-s="EXCHANGING">EXCHANGING</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="link" data-s="EXCHANGED">EXCHANGED</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="link" data-s="CONNECTING">CONNECTING</span>
+          <span class="sm-arrow">→</span>
+          <span class="state" data-sm="link" data-s="CONNECTED">CONNECTED</span>
+        </div>
+        <div class="sm-note">中间态超时会重发（默认 2 s，最多 10 次），之后退化为 IDLE 由周期扫描重试；断链直接回 IDLE。</div>
+      </div>
+    </div>
+
+    <div class="sm-log reveal" id="smLog">等待运行…</div>
+    <div style="margin-top:14px" class="reveal">
+      <button class="btn primary" id="smRun">运行状态迁移</button>
+    </div>
+  </section>
+
+  <!-- DISPATCH -->
+  <section id="dispatch">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">07</span> DISPATCH</div>
+      <h2>拷贝调度路径</h2>
+      <p class="lead">
+        调用方只提供源地址与目的地址，其余判断在库内完成：方向识别、远端 rank 定位、算子选择、按目标分组、同步或异步完成。
+        选择场景查看该路径实际经过的阶段。
+      </p>
+    </div>
+
+    <div class="flow reveal" id="flowSteps">
+      <div class="flow-step" data-fi="0">
+        <div class="fi">01 · ENTRY</div>
+        <h4>入口与校验</h4>
+        <p><code>smem_bm_copy()</code> 校验句柄、joined 状态、空指针与 stream 标志，并将 copy type 传给下层。</p>
+      </div>
+      <div class="flow-step" data-fi="1">
+        <div class="fi">02 · DIRECTION</div>
+        <h4>方向判定</h4>
+        <p>按本地/全局与 HBM/DRAM 分类源、目的地址，查 12 种方向表；AUTO 模式由 LUT 推断。</p>
+      </div>
+      <div class="flow-step" data-fi="2">
+        <div class="fi">03 · LOCATE</div>
+        <h4>定位远端 rank</h4>
+        <p><code>(gva − base) / maxSize</code> 得到 rank，无需索引；批量调用聚合为 <code>groupMap</code>。</p>
+      </div>
+      <div class="flow-step" data-fi="3">
+        <div class="fi">04 · ORCHESTRATE</div>
+        <h4>算子编排</h4>
+        <p><code>HostComposeDataOp</code> 依据 tag 与可达性给出算子优先级，失败后尝试下一个。</p>
+      </div>
+      <div class="flow-step" data-fi="4">
+        <div class="fi">05 · EXECUTE</div>
+        <h4>数据面执行</h4>
+        <p>SDMA/MTE、Device RDMA/URMA/UBoE、Host RDMA/TCP/SHM；单边读写，批量描述符一次下发。</p>
+      </div>
+      <div class="flow-step" data-fi="5">
+        <div class="fi">06 · COMPLETE</div>
+        <h4>完成与同步</h4>
+        <p>同步路径调用 Synchronize；异步路径挂到 ACL stream，或用 <code>smem_bm_wait</code> 统一等待。</p>
+      </div>
+    </div>
+
+    <div class="flow-btns reveal" id="flowBtns" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
+      <button class="btn small" data-flow="local">同机 L2G</button>
+      <button class="btn small" data-flow="d2rh">跨机 D2RH</button>
+      <button class="btn small" data-flow="rh2d">跨机 RH2D</button>
+      <button class="btn small" data-flow="batch">批量多目标</button>
+    </div>
+    <div class="flow-note reveal" id="flowNote">
+      <b>说明：</b>选择上方场景，查看该路径实际参与的阶段。所有场景均经过方向判定；跨机场景还需定位远端 rank。
+    </div>
+
+    <table class="matrix reveal">
+      <thead><tr><th>方向</th><th>语义</th><th>常用引擎 / 说明</th></tr></thead>
+      <tbody>
+        <tr><td>L2G / G2L</td><td>本机 HBM ↔ 全局窗口</td><td>SDMA / MTE</td></tr>
+        <tr><td>H2G / G2H</td><td>本机 DRAM ↔ 全局窗口</td><td>SDMA / Host SHM / Host RDMA</td></tr>
+        <tr><td>G2G</td><td>全局 → 全局</td><td>Device URMA / RDMA / SDMA</td></tr>
+        <tr><td>D2RH / RH2D</td><td>本机 HBM ↔ 跨机 DRAM</td><td>Device URMA / UBoE / RDMA</td></tr>
+        <tr><td>RD2D / D2RD</td><td>跨机 HBM ↔ 本机 HBM</td><td>Device URMA / RDMA</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- OFFLOAD -->
+  <section id="offload">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">08</span> ACC OFFLOAD</div>
+      <h2>KV Cache 卸载</h2>
+      <p class="lead">
+        LLM 推理的 KV Cache 由大量不连续的 block 组成。Offload 从预留的 DRAM 池分配内存，通过卡侧稀疏拷贝算子
+        将多个离散源地址一次搬运到多个离散目的地址，支持 LOCAL 与 SHARED 两种池化方式。
+      </p>
+    </div>
+
+    <aside class="off-side reveal">
+      <h3>接口与执行方式</h3>
+      <p>接口接收源地址数组、目的地址数组、长度数组与任务数，在 device 上异步执行；Python 侧提供
+      <span class="mono">empty</span> 与 <span class="mono">sparse_copy</span> 封装。</p>
+      <pre class="code"><span class="c">// C 接口：地址数组 + 长度数组 + 任务数</span>
+<span class="k">int32_t</span> offload_sparse_copy(
+    uint64_t srcPtr, uint64_t dstPtr,
+    uint64_t lenPtr, uint64_t sizePtr,
+    uint16_t deviceId);</pre>
+      <div class="off-scenes">
+        <div class="scene"><b>LOCAL</b><span>每 rank 独占一份本地 DRAM 池，reserveSize 与 allocSize 相等。</span></div>
+        <div class="scene"><b>SHARED</b><span>多 rank 共享同一份 DRAM 池，通过 storeUrl 汇聚；按需扩容，适合集中式 KV Cache 池。</span></div>
+      </div>
+    </aside>
+
+    <div class="note reveal">
+      <span><b>使用稀疏拷贝的原因：</b>单个 KV block 通常由 61 段 128 KB 与 61 段 16 KB 组成（约 8.57 MB，122 个离散地址）。
+      逐段调用 DMA 时启动开销占比过高；稀疏拷贝将地址数组与长度数组一次下发，由卡侧算子并发执行。</span>
+    </div>
+
+    <h3 class="sub-head reveal">稀疏拷贝的实现</h3>
+    <div class="grid g2 reveal">
+      <article class="card">
+        <h3>逐段调用：N 次拷贝</h3>
+        <ul class="cmp">
+          <li>每个离散段一次 host 调用与一次 stream 任务，122 段即 122 次下发。</li>
+          <li>单段 16 KB 时，固定启动开销远大于有效数据量，带宽利用率低。</li>
+          <li>段间没有跨调用的流水；若要并行，需应用自行拆分并管理多条 stream。</li>
+          <li>地址与长度由 host 逐次传入，每次都经过参数校验与任务下发。</li>
+        </ul>
+      </article>
+      <article class="card blue">
+        <h3>单次稀疏拷贝</h3>
+        <ul class="cmp">
+          <li>一次调用下发源地址数组、目的地址数组、长度数组与任务数，只产生一个 stream 任务。</li>
+          <li>数组与任务数驻留 device 内存，kernel 直接读取，不需要 host 回读或逐段下发。</li>
+          <li>48 / 64 个 AIV 核并行处理不同段；段数少于核数时按字节区间切分。</li>
+          <li>段与段之间不要求连续、等长或同序，源和目的可各自独立寻址。</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="cmp-anim reveal">
+      <div class="cmp-bar">
+        <button class="btn small primary" id="cmpRun">运行对比</button>
+        <button class="btn small" id="cmpReset">重置</button>
+        <span class="cmp-stat" id="cmpStat">两条泳道搬运相同的 6 个离散段，共用同一时间轴；每格为 1 个示意时间窗。</span>
+      </div>
+      <svg id="cmpSvg" viewBox="0 0 1000 480" role="img"
+           aria-label="逐段调用与单次稀疏拷贝的各执行阶段对比动画"></svg>
+    </div>
+
+    <div class="note reveal">
+      <span><b>执行路径：</b><span class="mono">offload_sparse_copy</span> 在 host 侧只做指针解析，随后把四个 device 指针
+      提交到当前 NPU stream（<span class="mono">torch_npu RunOpApiV2</span>）。kernel 读取任务数后选择分支：
+      任务数 ≥ AIV 核数时，按 K/V 配对处理（前一半为 K、后一半为 V），每个核按核号轮转取组，K 与 V 连续搬入同一块 UB，
+      并使用双缓冲使下一组的 CopyIn 与当前组的 CopyOut 重叠；任务数少于核数时，按总字节数均分给各核，
+      单段可被多个核切分。每段数据以 176 KB 为单位经 UB 执行 <span class="mono">DataCopyPad</span> GM→UB→GM，
+      全核完成后由 stream 统一提交完成状态。</span>
+    </div>
+  </section>
+
+  <!-- CODE MAP -->
+  <section id="code">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">09</span> CODE MAP</div>
+      <h2>代码结构</h2>
+      <p class="lead">
+        仓库按语义层、核心层、控制面与应用划分。src/smem 生成 libmf_smem.so，src/hybm 生成 libmf_hybm_core.so，
+        Offload 与 acc_links 各自成库；控制面同时提供进程内 TCP Store 与可选 etcd 后端。上方结构图给出层次与调用方向，
+        下方按模块展开，点击左侧模块查看职责与入口文件。
+      </p>
+    </div>
+
+    <div class="gc-figure reveal">
+      <div class="gc-bar">
+        <span class="gc-title">全局代码结构与调用关系</span>
+        <span class="gc-cap" id="gcCap">上层只调用下层的公开接口，跨层直调仅出现在 smem → hybm 一处。悬停模块查看职责，点击跳转模块详情。</span>
+      </div>
+      <div class="gc-scroll">
+        <svg class="gc-svg" id="gcSvg" viewBox="0 0 1000 622" role="img" aria-label="MemFabric Hybrid 分层代码结构图">
+          <defs>
+            <marker id="gcArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#4cb8ff"/></marker>
+          </defs>
+
+          <g class="layer" data-layer="L0"><rect x="8" y="12" width="984" height="70" rx="10"/></g>
+          <g class="layer" data-layer="L1"><rect x="8" y="108" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L2"><rect x="8" y="210" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L3"><rect x="8" y="312" width="984" height="104" rx="10"/></g>
+          <g class="layer" data-layer="L4"><rect x="8" y="442" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L5"><rect x="8" y="544" width="984" height="66" rx="10"/></g>
+
+          <text class="lx" x="20" y="34">L0</text>
+          <text class="ln" x="20" y="49">接口层</text>
+          <text class="ln" x="20" y="63">C · Python</text>
+          <text class="lx" x="20" y="130">L1</text>
+          <text class="ln" x="20" y="145">语义层</text>
+          <text class="ln" x="20" y="159">四类语义</text>
+          <text class="lx" x="20" y="232">L2</text>
+          <text class="ln" x="20" y="247">控制面</text>
+          <text class="ln" x="20" y="261">store · group</text>
+          <text class="lx" x="20" y="334">L3</text>
+          <text class="ln" x="20" y="349">核心层</text>
+          <text class="ln" x="20" y="363">hybm core</text>
+          <text class="lx" x="20" y="464">L4</text>
+          <text class="ln" x="20" y="479">平台抽象</text>
+          <text class="ln" x="20" y="493">dl_* 封装</text>
+          <text class="lx" x="20" y="566">L5</text>
+          <text class="ln" x="20" y="581">运行时</text>
+          <text class="ln" x="20" y="595">CANN · NIC</text>
+
+          <text class="gap-lbl" x="112" y="100">C API / Python 绑定调用</text>
+          <line class="flow" x1="420" y1="85" x2="420" y2="104" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="85" x2="700" y2="104" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="202">CheckIn / Join / Watch：组网与信息交换</text>
+          <line class="flow" x1="420" y1="187" x2="420" y2="206" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="187" x2="700" y2="206" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="304">hybm_* 领域调用（跨过控制面）</text>
+          <line class="flow" x1="420" y1="289" x2="420" y2="308" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="289" x2="700" y2="308" marker-end="url(#gcArr)"/>
+          <line class="flow dash" x1="399.5" y1="176" x2="399.5" y2="316" marker-end="url(#gcArr)"/>
+          <text class="gap-lbl" x="392" y="304" text-anchor="end">hybm_* 直调</text>
+
+          <text class="gap-lbl" x="112" y="434">dl_* 动态加载：ACL / HAL / HCOMM / Extend</text>
+          <line class="flow" x1="420" y1="419" x2="420" y2="438" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="419" x2="700" y2="438" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="536">运行时接口：stream · 内存映射 · 远端访问</text>
+          <line class="flow" x1="420" y1="521" x2="420" y2="540" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="521" x2="700" y2="540" marker-end="url(#gcArr)"/>
+
+          <g class="gc-box" data-layer="L0" data-mod="app" data-cap="应用与示例：直接调用 C API 或 Python 绑定，不依赖内部实现。">
+            <rect class="box" x="112" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="126" y="42">App / examples</text><text class="bs" x="126" y="58">zbal · tensorRTL</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="对外 C 接口：smem_bm_* / smem_trans_*，是 App 与语义层之间的唯一契约。">
+            <rect class="box" x="332" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="346" y="42">C API</text><text class="bs" x="346" y="58">smem_bm.h · smem_trans.h</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="Python 绑定，最终调用同一套 C API。">
+            <rect class="box" x="552" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="566" y="42">Python API</text><text class="bs" x="566" y="58">pybind11 绑定</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="offload" data-cap="Offload 对外接口：提交稀疏拷贝任务到 AIV 核，不经过 smem 调用链。">
+            <rect class="box" x="772" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="786" y="42">acc_offload API</text><text class="bs" x="786" y="58">offload_sparse_copy</text>
+          </g>
+
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM BM：管理 HBM/DRAM 池、GVA 编址与 smem_bm_copy，向下调用 hybm entity 与 data_operation。">
+            <rect class="box" x="112" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="126" y="140">smem_bm</text><text class="bs" x="126" y="158">池化 · GVA 拷贝</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM TRANS：面向已注册内存的点对点传输，复用 hybm 的建链与 DataOperator。">
+            <rect class="box" x="332" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="346" y="140">smem_trans</text><text class="bs" x="346" y="158">注册内存点对点</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM SHM：同机进程与算子间共享内存，不经过网络传输。">
+            <rect class="box" x="552" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="566" y="140">smem_shm</text><text class="bs" x="566" y="158">同机算子共享</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="offload" data-cap="Offload 实现：AIV 核并行稀疏拷贝，调用 ACL 与算子 launch，不依赖 hybm。">
+            <rect class="box" x="772" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="786" y="140">acc_offload</text><text class="bs" x="786" y="158">稀疏拷贝算子</text>
+          </g>
+
+          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="配置存储：TCP 模式由 rank0 兼服务端，etcd 模式接入外部集群并由租约选主。">
+            <rect class="box" x="112" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="126" y="242">Config Store</text><text class="bs" x="126" y="260">TCP / etcd · KV · Watch · CAS</text>
+          </g>
+          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="组管理：维护 rank 生命周期与有向链路状态，驱动信息交换、import、建链与 ACTIVE 提升。">
+            <rect class="box" x="407" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="421" y="242">Group Manager</text><text class="bs" x="421" y="260">Server(rank0) + Client 状态机</text>
+          </g>
+          <g class="gc-box" data-layer="L2" data-mod="links" data-cap="acc_links：进程间控制通道，承载算子侧控制消息，与数据面解耦。">
+            <rect class="box" x="702" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="716" y="242">acc_links</text><text class="bs" x="716" y="260">IPC 控制通道</text>
+          </g>
+
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="hybm 门面：持有内存段、VA 映射与 DataOperator；CopyData 负责定位 rank 并选择算子。">
+            <rect class="box" x="112" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="126" y="346">Entity</text><text class="bs" x="126" y="366">MemEntityDefault</text>
+            <text class="bs" x="126" y="384">Create · Join · CopyData</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="算子链：按 rank2RankOpType 优先级选择具体 DataOp，向上屏蔽协议差异。">
+            <rect class="box" x="332" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="346" y="346">DataOperator</text><text class="bs" x="346" y="366">HostComposeDataOp</text>
+            <text class="bs" x="346" y="384">SDMA · URMA · RDMA · TCP</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="传输层：每 rank 一个实例，负责建链、内存键交换与 WriteRemote / ReadRemote。">
+            <rect class="box" x="552" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="566" y="346">TransportManager</text><text class="bs" x="566" y="366">HCOM · RDMA · URMA · UBoE</text>
+            <text class="bs" x="566" y="384">WriteRemote / ReadRemote</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="内存与流：GVA 编址与地址转换、stream 复用、注册内存池。">
+            <rect class="box" x="772" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="786" y="346">内存与流</text><text class="bs" x="786" y="366">GVA / VA Manager</text>
+            <text class="bs" x="786" y="384">Stream Manager · 内存池</text>
+          </g>
+
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="ACL 动态加载封装：设备使能、memcpy、stream 同步。">
+            <rect class="box" x="112" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="126" y="474">DlAclApi</text><text class="bs" x="126" y="492">ACL runtime 封装</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="HAL 封装：host 内存注册与设备地址映射。">
+            <rect class="box" x="332" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="346" y="474">DlHalApi</text><text class="bs" x="346" y="492">HAL / 内存映射</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="通信与扩展算子封装：HCCP 建链、批量扩展拷贝。">
+            <rect class="box" x="552" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="566" y="474">DlHcommApi / Extend</text><text class="bs" x="566" y="492">HCCP · HybmCopyExtend</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="util" data-cap="公共设施：日志、环境变量解析、etcd Go 共享库与工具类。">
+            <rect class="box" x="772" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="786" y="474">util</text><text class="bs" x="786" y="492">日志 · env · etcd Go 后端</text>
+          </g>
+
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="昇腾运行时：设备、stream 与内存管理。">
+            <rect class="box" x="112" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="126" y="576">CANN / ACL Runtime</text><text class="bs" x="126" y="592">device · stream</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="HCCP / UB：链路建立与事件通知。">
+            <rect class="box" x="332" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="346" y="576">HCCP / UB</text><text class="bs" x="346" y="592">建链 · 事件通知</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="网卡能力：URMA / RoCE 单边读写与完成事件。">
+            <rect class="box" x="552" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="566" y="576">URMA / RoCE NIC</text><text class="bs" x="566" y="592">单边读写</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="片内搬运引擎：SDMA / MTE / AIV 核执行实际数据搬移。">
+            <rect class="box" x="772" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="786" y="576">SDMA / MTE / AIV</text><text class="bs" x="786" y="592">片内搬运</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="code-grid reveal">
+      <div class="tree-box">
+        <ul class="tree">
+          <li>
+            <button class="root active" data-mod="root">memfabric_hybrid<span class="meta">372 files</span></button>
+            <ul>
+              <li><button data-mod="smem">src/smem<span class="meta">102 · 28.4k</span></button></li>
+              <li><button data-mod="hybm">src/hybm<span class="meta">169 · 47.5k</span></button></li>
+              <li><button data-mod="offload">src/acc_offload<span class="meta">26 · 4.0k</span></button></li>
+              <li><button data-mod="links">src/acc_links<span class="meta">47 · 9.0k</span></button></li>
+              <li><button data-mod="util">src/util<span class="meta">28 · 5.6k</span></button></li>
+              <li><button data-mod="include">public headers<span class="meta">C · PYTHON API</span></button></li>
+              <li><button data-mod="app">app + examples<span class="meta">CONSUMERS</span></button></li>
+              <li><button data-mod="test">test/ut<span class="meta">105 files</span></button></li>
+              <li><button data-mod="script">script + docs<span class="meta">BUILD · DOCS</span></button></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <aside class="code-detail" id="codeDetail" aria-live="polite"></aside>
+    </div>
+
+    <div class="grid g3" style="margin-top:18px">
+      <article class="card reveal">
+        <h3>语义层与核心层</h3>
+        <p><span class="kbd">smem_bm</span> 管理池化与 GVA 拷贝，<span class="kbd">smem_trans</span> 处理已注册内存的点对点传输，
+        <span class="kbd">smem_shm</span> 提供同机算子共享。三者复用 hybm 的地址、建链与算子。</p>
+      </article>
+      <article class="card blue reveal">
+        <h3>南向扩展点</h3>
+        <p>新增链路需实现 <span class="kbd">TransportManager</span>（信息交换、连接、可达性）与
+        <span class="kbd">DataOperator</span>（按描述符搬运）。上层按优先级与 tag 选择，不感知具体协议。</p>
+      </article>
+      <article class="card gold reveal">
+        <h3>控制面实现</h3>
+        <p>Config Store 抽象 KV、Watch、CAS 与选主能力。TCP 模式无外部依赖，rank0 兼任服务端；etcd 模式提供租约与 HA，
+        通过 Go 共享库接入。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- PERF -->
+  <section id="perf">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">10</span> PERFORMANCE</div>
+      <h2>实测带宽</h2>
+      <p class="lead">
+        昇腾 A3 超节点、UB 1.0、单 DIE + 单 CPU，单次拷贝 1–2 GB。跨机 DRAM 方向受主机内存与链路共同约束，
+        跨机 HBM 到 HBM 方向带宽最高。
+      </p>
+    </div>
+
+    <div class="perf-box reveal">
+      <div class="bar-row"><span class="name">RH2D → HBM</span><div class="bar"><i data-w="66"></i></div><span class="val">110.23 GB/s</span></div>
+      <div class="bar-row"><span class="name">D2RH → DRAM</span><div class="bar gold"><i data-w="45"></i></div><span class="val">74.54 GB/s</span></div>
+      <div class="bar-row"><span class="name">RD2D → HBM</span><div class="bar"><i data-w="100"></i></div><span class="val">166.47 GB/s</span></div>
+      <div class="bar-row"><span class="name">D2RD → HBM</span><div class="bar violet"><i data-w="83"></i></div><span class="val">138.01 GB/s</span></div>
+      <div class="axis"><span>0</span><span>50</span><span>100</span><span>150</span><span>180 GB/s</span></div>
+      <p class="perf-note">
+        测试条件：README 性能章节，1 GB/s = 1000³ B/s；HCOM / RDMA / UB 的可用性与拓扑相关。
+        跨机 DRAM 访问需主机侧注册内存并完成映射，因此 D2RH 通常低于纯 Device 链路。
+      </p>
+    </div>
+  </section>
+
+  <!-- BUILD -->
+  <section id="build">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">11</span> BUILD &amp; VERIFY</div>
+      <h2>构建、运行与验证</h2>
+      <p class="lead">
+        默认通过 wrapper 脚本完成 RELEASE 构建、打包与运行准备；单元测试启用覆盖率与 ASAN。
+        aarch64 与 mockcpp 环境下 ASAN 可能误报，按仓库说明改用 DEBUG 构建。
+      </p>
+    </div>
+
+    <div class="build-grid reveal">
+      <div class="build-card">
+        <h3>构建</h3>
+        <p>默认 Python ON、XPU_TYPE=NPU。按需切换 Debug、无加速器或 HCOM + RDMA。</p>
+        <div class="cmd"><button class="btn small copy" data-copy="bash script/build_and_pack_run.sh">复制</button><code>bash script/build_and_pack_run.sh
+
+# Debug
+bash script/build_and_pack_run.sh --build_mode DEBUG
+
+# 无加速器
+bash script/build_and_pack_run.sh \
+  --xpu_type NONE --build_hcom ON --build_hcom_rdma OFF</code></div>
+        <div class="chips" style="margin-top:12px">
+          <span class="chip">CMake ≥ 3.12</span><span class="chip">GCC ≥ 11.4</span>
+          <span class="chip">GLIBC ≥ 2.28</span><span class="chip">Python ≥ 3.8</span>
+        </div>
+      </div>
+      <div class="build-card">
+        <h3>测试</h3>
+        <p>首次运行需初始化 googletest / mockcpp 子模块；--fast 为增量构建。</p>
+        <div class="cmd"><button class="btn small copy" data-copy="bash script/run_ut.sh --fast">复制</button><code>git submodule update --recursive --init
+
+# 全量 UT（ASAN + 覆盖率）
+bash script/run_ut.sh
+
+# 快速增量
+bash script/run_ut.sh --fast
+
+# 单个用例
+bash script/run_ut.sh --fast TestName</code></div>
+        <div class="chips" style="margin-top:12px">
+          <span class="chip">lines ≥ 70%</span><span class="chip">branches ≥ 40%</span>
+          <span class="chip">aarch64 用 DEBUG</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="build-grid reveal" style="margin-top:18px">
+      <div class="build-card">
+        <h3>运行前置</h3>
+        <p><span class="mono">ASCEND_MF_STORE_URL</span> 必填，决定控制面后端；NPU 需设置 CANN 路径。</p>
+        <div class="cmd"><button class="btn small copy" data-copy="export ASCEND_MF_STORE_URL=tcp://127.0.0.1:12345">复制</button><code>export ASCEND_MF_STORE_URL=tcp://127.0.0.1:12345
+# 或 etcd://127.0.0.1:12335 / reg://...
+export ASCEND_HOME_PATH=/usr/local/Ascend
+export ASCEND_MF_LOG_LEVEL=2</code></div>
+      </div>
+      <div class="build-card">
+        <h3>Python 快速上手</h3>
+        <p>wheel 安装后导入 <span class="mono">memfabric_hybrid</span>，使用 bm / trans / shm / offload 子模块。</p>
+        <div class="cmd"><button class="btn small copy" data-copy="pip install memfabric_hybrid">复制</button><code>pip install memfabric_hybrid
+
+python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot">
+    <div>
+      <b>MemFabric Hybrid · 架构与实现可视化</b><br>
+      基于仓库 v1.5.0 源码与文档整理；示意图用于说明机制，接口与参数以 API 文档为准。
+    </div>
+    <div>
+      <a href="docs/zh/feature.md">特性说明</a> ·
+      <a href="docs/zh/API.md">API</a> ·
+      <a href="docs/zh/environment_variables.md">环境变量</a> ·
+      <a href="README.md">README</a><br>
+      Mulan PSL v2 · Copyright © Huawei Technologies Co., Ltd.
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  /* ---------------- progress + nav ---------------- */
+  const progress = $('#progress');
+  const navLinks = $$('.nav-links a');
+  const sections = navLinks.map(a => $(a.getAttribute('href'))).filter(Boolean);
+  function onScroll() {
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    if (progress) progress.style.width = (max > 0 ? h.scrollTop / max * 100 : 0) + '%';
+    const y = h.scrollTop + 130;
+    let cur = sections[0];
+    sections.forEach(s => { if (s.offsetTop <= y) cur = s; });
+    navLinks.forEach(a => a.classList.toggle('active', !!cur && a.getAttribute('href') === '#' + cur.id));
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', onScroll);
+  onScroll();
+
+  const revealIO = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('in'); revealIO.unobserve(e.target); }
+    });
+  }, { threshold: 0.1 });
+  $$('.reveal').forEach(el => {
+    const r = el.getBoundingClientRect();
+    if (r.top < innerHeight && r.bottom > 0) {
+      el.classList.add('in');
+    } else {
+      revealIO.observe(el);
+    }
+  });
+
+  /* ---------------- hero canvas ---------------- */
+  const canvas = $('#fabricCanvas');
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    let w = 0, h = 0, nodes = [], raf = 0, visible = true;
+
+    function resize() {
+      const r = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = Math.max(1, r.width); h = Math.max(1, r.height);
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const count = Math.max(24, Math.min(72, Math.floor(w * h / 24000)));
+      nodes = Array.from({ length: count }, () => ({
+        x: Math.random() * w, y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.25, vy: (Math.random() - 0.5) * 0.25,
+        r: 1 + Math.random() * 1.7, p: Math.random() * Math.PI * 2
+      }));
+    }
+
+    function frame(t) {
+      ctx.clearRect(0, 0, w, h);
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (d < 155) {
+            ctx.strokeStyle = 'rgba(76,184,255,' + ((1 - d / 155) * 0.18).toFixed(3) + ')';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          }
+        }
+      }
+      nodes.forEach(n => {
+        const pulse = 0.52 + Math.sin(t / 850 + n.p) * 0.34;
+        ctx.fillStyle = 'rgba(60,230,168,' + (0.3 + pulse * 0.4).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
+        if (!reduce) {
+          n.x += n.vx; n.y += n.vy;
+          if (n.x < 0 || n.x > w) n.vx *= -1;
+          if (n.y < 0 || n.y > h) n.vy *= -1;
+        }
+      });
+      raf = requestAnimationFrame(frame);
+    }
+    function start() { if (!raf) raf = requestAnimationFrame(frame); }
+    function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+    resize();
+    if (reduce) { frame(0); cancelAnimationFrame(raf); raf = 0; } else { start(); }
+    addEventListener('resize', () => { stop(); resize(); if (!reduce) start(); });
+    new IntersectionObserver(es => {
+      es.forEach(e => { visible = e.isIntersecting; if (visible && !reduce) start(); else stop(); });
+    }, { threshold: 0.02 }).observe(canvas);
+  }
+
+  /* ---------------- architecture ---------------- */
+  const ARCH = {
+    app: {
+      tag: 'L4 · CONSUMERS', title: '应用与示例层',
+      stats: '官方应用 · 样例 · 基准测试',
+      desc: '直接使用内存池化能力，覆盖推理、KV Cache 卸载与跨机数据交换，同时作为 API 语义与性能的回归载体。',
+      list: [
+        'ZBAL：面向昇腾集群的集合通信与内存池化应用。',
+        'TensorRTL：推荐 / 大模型场景的分布式推理实践。',
+        'examples：最小可运行样例，覆盖 BM、TRANS、SHM 与 Offload。',
+        'benchmark：带宽、时延与扩展性测试，README 数据来源。'
+      ],
+      files: [['app/zbal/', 'ZBAL'], ['app/tensorRTL/', 'TensorRTL'], ['examples/', 'examples'], ['README.md', 'README']]
+    },
+    smem: {
+      tag: 'L3 · libmf_smem.so', title: '语义与接口层 · smem',
+      stats: '102 files · 28,371 lines',
+      desc: '将四类业务语义翻译为 hybm 的统一模型，负责句柄、生命周期、参数校验、错误码与 Python 绑定，不实现数据搬运。',
+      list: [
+        'smem_bm：大容量池化。create / join / copy / free，导出 GVA 句柄。',
+        'smem_trans：注册内存的点对点传输，面向已有 buffer 的零拷贝交换。',
+        'smem_shm：同机共享内存，供算子级直接访问。',
+        'config_store / group_manager：控制面成员管理、KV 与状态机。',
+        'python_wrapper：pybind11 绑定，导出 memfabric_hybrid 包。'
+      ],
+      files: [
+        ['src/smem/csrc/smem_bm/smem_bm.cpp', 'smem_bm.cpp'],
+        ['src/smem/csrc/smem_bm/smem_bm_entry.cpp', 'smem_bm_entry.cpp'],
+        ['src/smem/csrc/smem_bm/smem_bm_entry_manager.cpp', 'entry_manager.cpp'],
+        ['src/smem/csrc/config_store/tcp_store/smem_group_manager_server.h', 'group_manager_server.h'],
+        ['src/smem/python/memfabric_hybrid/memfabric_hybrid/__init__.py', 'python __init__.py']
+      ]
+    },
+    hybm: {
+      tag: 'L2 · libmf_hybm_core.so', title: '内存与传输核心 · hybm',
+      stats: '169 files · 47,547 lines',
+      desc: '实现全局地址空间、内存段、Exchange Info、导入映射、传输连接与数据算子。',
+      list: [
+        'entity：MemEntity 抽象与 MemEntityDefault 实现，持有 HBM/DRAM 段与算子。',
+        'mm：GVA/DVA/HVA 三张地址表，12 种拷贝方向与地址分类。',
+        'transport：HCOM / HCCP(RDMA) / SDMA / COMPOSE 四种管理器的创建与建链。',
+        'data_operation：按 (srcRank,dstRank) 分组、按优先级编排与降级。',
+        'under_api / driver：ACL、HAL、HCCP、HCOM 等底层接口封装。'
+      ],
+      files: [
+        ['src/hybm/csrc/entity/hybm_entity.h', 'hybm_entity.h'],
+        ['src/hybm/csrc/entity/hybm_entity_default.h', 'entity_default.h'],
+        ['src/hybm/csrc/mm/hybm_va_manager.h', 'hybm_va_manager.h'],
+        ['src/hybm/csrc/common/hybm_define.h', 'hybm_define.h'],
+        ['src/hybm/csrc/transport/protocol/hybm_transport_manager.h', 'transport_manager.h'],
+        ['src/hybm/csrc/data_operation/host/hybm_compose_data_op.cpp', 'compose_data_op.cpp']
+      ]
+    },
+    infra: {
+      tag: 'L1 · CROSS-CUTTING', title: '控制面与基础设施',
+      stats: 'config store · acc_links · ptracer',
+      desc: '负责进程互发现、元数据交换与建链，并提供 TLS、HA、日志与性能打点；向数据面只暴露状态就绪信号。',
+      list: [
+        'TcpConfigStore：零外部依赖，rank0 兼任服务端，其他 rank 为客户端。',
+        'etcd backend：Go 共享库，提供租约选主、watch 与 leader 变更回调。',
+        'GroupManager：rank 生命周期与有向链路状态机，超时重试与断链恢复。',
+        'acc_links：TCP/HTTP 控制通道、TLS 与连接管理。',
+        'ptracer：关键路径打点与性能统计。'
+      ],
+      files: [
+        ['src/smem/csrc/config_store/tcp_store/smem_tcp_config_store.h', 'tcp_config_store.h'],
+        ['src/smem/csrc/config_store/tcp_store/smem_group_manager_server.h', 'group_manager_server.h'],
+        ['src/util/etcd_client/etcd_store_backend/', 'etcd backend'],
+        ['src/acc_links/', 'acc_links'],
+        ['docs/zh/etcd_store_backend.md', 'etcd docs']
+      ]
+    }
+  };
+
+  function fileLink(p, label) {
+    return '<a href="file:///home/qiuruiqi/prj/memfabric_hybrid/' + p + '" title="' + p + '">' + label + '</a>';
+  }
+
+  function renderArch(key) {
+    const d = ARCH[key];
+    if (!d) return;
+    const box = $('#archDetail');
+    if (!box) return;
+    box.innerHTML =
+      '<span class="chip">' + d.tag + '</span>' +
+      '<h3>' + d.title + '</h3>' +
+      '<div class="detail-stats">' + d.stats + '</div>' +
+      '<p>' + d.desc + '</p>' +
+      '<ul class="detail-list">' + d.list.map(x => '<li>' + x + '</li>').join('') + '</ul>' +
+      '<div class="file-links">' + d.files.map(f => fileLink(f[0], f[1])).join('') + '</div>';
+  }
+
+  $$('#archStack .layer').forEach(layer => {
+    layer.addEventListener('click', () => {
+      $$('#archStack .layer').forEach(x => x.classList.remove('active'));
+      layer.classList.add('active');
+      renderArch(layer.dataset.layer);
+    });
+  });
+  renderArch('app');
+
+  /* ---------------- GVA ---------------- */
+  const GVA_BASE = 0x280040000000n;
+  const GVA_MAX = 8n << 30n; // 8 GiB per rank
+  const GVA_RANKS = 4;
+  const localSel = $('#gvaLocalRank');
+  const offsetRange = $('#gvaOffset');
+  const offsetLabel = $('#gvaOffsetLabel');
+  let targetRank = 1;
+
+  const hex12 = v => '0x' + v.toString(16).toUpperCase().padStart(12, '0');
+
+  function stripHTML(localRank, pct) {
+    let html = '';
+    for (let i = 0; i < GVA_RANKS; i++) {
+      const cls = i === targetRank ? 'remote target' : (i === localRank ? 'local' : '');
+      const note = i === targetRank ? '目标窗口' : (i === localRank ? '本机' : 'maxSize');
+      html += '<div class="seg ' + cls + '"><b>rank ' + i + '</b><small>' + note + '</small></div>';
+    }
+    const left = ((targetRank + pct / 100) / GVA_RANKS) * 100;
+    return '<div class="gva-strip">' + html + '<div class="gva-marker" style="left:' + left.toFixed(2) + '%"></div></div>';
+  }
+
+  function renderGVA() {
+    const local = Number(localSel.value);
+    const pct = Number(offsetRange.value);
+    offsetLabel.textContent = pct + '%';
+    const off = GVA_MAX * BigInt(pct) / 100n;
+    const gva = GVA_BASE + BigInt(targetRank) * GVA_MAX + off;
+    const winBase = GVA_BASE + BigInt(targetRank) * GVA_MAX;
+
+    const views = $('#gvaViews');
+    views.innerHTML =
+      '<div class="gva-view">' +
+        '<div class="gva-view-head"><span class="rankbadge">rank ' + local + '</span> 本机进程视角<span class="hint">同一张 GVA 表</span></div>' +
+        stripHTML(local, pct) +
+        '<div class="gva-formula">GVA = <em>base</em> + ' + targetRank + ' × maxSize + offset</div>' +
+      '</div>' +
+      '<div class="gva-view">' +
+        '<div class="gva-view-head"><span class="rankbadge">rank ' + targetRank + '</span> 目标进程视角<span class="hint">同一地址，同一内存</span></div>' +
+        stripHTML(targetRank, pct) +
+        '<div class="gva-formula">LVA = GVA − base − ' + targetRank + ' × maxSize = <em>' + hex12(off) + '</em></div>' +
+      '</div>';
+
+    const same = local === targetRank;
+    const result = $('#gvaResult');
+    result.innerHTML =
+      '<div class="res wide"><small>计算出的 GVA</small><b class="gold">' + hex12(gva) + '</b></div>' +
+      '<div class="res"><small>归属 RANK</small><b class="mint">rank ' + targetRank + '</b></div>' +
+      '<div class="res"><small>窗口内偏移</small><b>' + hex12(off) + '</b></div>' +
+      '<div class="res wide"><small>目标窗口起始</small><b>' + hex12(winBase) + '</b></div>' +
+      '<div class="res wide"><small>本机访问方式</small><b class="mint">' +
+        (same ? '本地寻址 · 直接读写' : '跨机 · 传输引擎单边读写') + '</b></div>';
+  }
+
+  if (localSel && offsetRange && $('#gvaViews') && $('#gvaResult')) {
+    $$('#gvaTargetRanks .rankbtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        $$('#gvaTargetRanks .rankbtn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        targetRank = Number(btn.dataset.rank);
+        renderGVA();
+      });
+    });
+    localSel.addEventListener('change', renderGVA);
+    offsetRange.addEventListener('input', renderGVA);
+    renderGVA();
+  }
+
+  /* ---------------- data plane ---------------- */
+  const DP = {
+    local: {
+      d: 'M 230 128 C 350 190, 160 250, 230 308',
+      title: 'L2G · 本机 HBM 到全局窗口',
+      route: 'rank 0 HBM → rank 0 GVM / DRAM 窗口',
+      desc: '同机设备侧拷贝：GVA 直接翻译为本地地址，SDMA / MTE 按描述符搬运，不经过网络。',
+      engine: 'Device SDMA / MTE', bw: '—（本地）',
+      from: 'node-hbmA', to: 'node-dramA', label: '本地数据面：SDMA / MTE 直接搬运'
+    },
+    d2rh: {
+      d: 'M 230 128 C 420 90, 560 330, 800 308',
+      title: 'D2RH · 本机 HBM 到远端 DRAM',
+      route: '本机 rank 0 HBM → 跨机 rank 1 DRAM',
+      desc: '本机发起单边写：按对端注册的内存键，将数据从本地 HBM 经 UB / RoCE 写入远端主机 DRAM。',
+      engine: 'Device URMA / UBoE / RDMA', bw: '74.54 GB/s',
+      from: 'node-hbmA', to: 'node-dramB', label: '单边写：本地 HBM → 远端 DRAM'
+    },
+    rh2d: {
+      d: 'M 800 308 C 620 360, 430 70, 230 128',
+      title: 'RH2D · 远端 DRAM 到本机 HBM',
+      route: '跨机 rank 1 DRAM → 本机 rank 0 HBM',
+      desc: '本机发起单边读：按对端内存键读取远端 DRAM，数据经互联返回后写入本地 HBM。',
+      engine: 'Device URMA / UBoE / RDMA', bw: '110.23 GB/s',
+      from: 'node-dramB', to: 'node-hbmA', label: '单边读：远端 DRAM → 本地 HBM'
+    },
+    d2d: {
+      d: 'M 800 128 C 620 40, 400 40, 230 128',
+      title: 'RD2D · 远端 HBM 到本机 HBM',
+      route: '跨机 rank 1 HBM → 本机 rank 0 HBM',
+      desc: '设备侧单边读：按对端内存键读取远端 HBM，经 UB / RoCE 返回本机并写入本地 HBM。',
+      engine: 'Device URMA / RDMA', bw: '166.47 GB/s',
+      from: 'node-hbmB', to: 'node-hbmA', label: '设备单边读：远端 HBM → 本地 HBM'
+    },
+    h2h: {
+      d: 'M 800 308 C 620 390, 400 390, 230 308',
+      title: 'H2H · 远端 DRAM 到本机 DRAM',
+      route: '跨机 rank 1 DRAM → 本机 rank 0 DRAM',
+      desc: '主机侧路径：两端 DRAM 均完成注册，通过 Host RDMA / TCP / SHM 完成跨机搬运，适用于大容量数据同步。',
+      engine: 'Host RDMA / TCP / SHM', bw: '—（随链路）',
+      from: 'node-dramB', to: 'node-dramA', label: '主机侧路径：远端 DRAM → 本地 DRAM'
+    }
+  };
+
+  const dpPath = $('#dpFlowPath');
+  const dpPacket = $('#dpPacket');
+  const dpGlow = $('#dpGlow');
+  const dpLabel = $('#dpPathLabel');
+  let dpRaf = 0;
+
+  function setNodeActive(id, on) {
+    const g = document.getElementById(id);
+    if (!g) return;
+    $$('rect', g).forEach(r => r.classList.toggle('active', on));
+  }
+
+  function animateDp() {
+    if (!dpPath || !dpPacket) return;
+    const len = dpPath.getTotalLength();
+    if (dpRaf) cancelAnimationFrame(dpRaf);
+    if (reduce) {
+      const p = dpPath.getPointAtLength(len * 0.55);
+      dpPacket.setAttribute('cx', p.x); dpPacket.setAttribute('cy', p.y);
+      if (dpGlow) { dpGlow.setAttribute('cx', p.x); dpGlow.setAttribute('cy', p.y); }
+      return;
+    }
+    const t0 = performance.now();
+    const dur = 2100;
+    function step(t) {
+      const k = ((t - t0) % dur) / dur;
+      const p = dpPath.getPointAtLength(len * k);
+      dpPacket.setAttribute('cx', p.x); dpPacket.setAttribute('cy', p.y);
+      if (dpGlow) { dpGlow.setAttribute('cx', p.x); dpGlow.setAttribute('cy', p.y); }
+      dpRaf = requestAnimationFrame(step);
+    }
+    dpRaf = requestAnimationFrame(step);
+  }
+
+  function setScene(key) {
+    const d = DP[key];
+    if (!d) return;
+    $$('#dpBtns .dp-btn').forEach(b => b.classList.toggle('active', b.dataset.scen === key));
+    dpPath.setAttribute('d', d.d);
+    dpLabel.textContent = d.label;
+    $('#dpTitle').textContent = d.title;
+    $('#dpRoute').textContent = d.route;
+    $('#dpDesc').textContent = d.desc;
+    $('#dpEngine').textContent = d.engine;
+    $('#dpBw').textContent = d.bw;
+    $$('.dp-svg g[id^="node-"]').forEach(g => setNodeActive(g.id, false));
+    setNodeActive(d.from, true);
+    setNodeActive(d.to, true);
+    animateDp();
+  }
+
+  if (dpPath) {
+    $$('#dpBtns .dp-btn').forEach(btn => btn.addEventListener('click', () => setScene(btn.dataset.scen)));
+    setScene('d2d');
+  }
+
+  /* ---------------- sequence diagram ---------------- */
+  const seqSvg = $('#seqSvg');
+  const seqStep = $('#seqStep');
+  const ACT = ['App', 'smem_bm', 'GroupMgr / Store', 'hybm Entity', 'Transport', 'Peer rank'];
+  const SEQ = [
+    ['App', 'smem_bm', 'smem_bm_init(storeUrl, worldSize, deviceId)', 'req'],
+    ['smem_bm', 'GroupMgr / Store', 'CreateStore / PrepareStore', 'req'],
+    ['GroupMgr / Store', 'smem_bm', 'store ready（rank0 = BOTH）', 'ret'],
+    ['smem_bm', 'smem_bm', 'AutoRanking → rankId', 'self'],
+    ['App', 'smem_bm', 'smem_bm_create(config)', 'req'],
+    ['smem_bm', 'hybm Entity', 'hybm_create_entity(deviceId)', 'req'],
+    ['smem_bm', 'hybm Entity', 'hybm_reserve_mem_space(HBM/DRAM)', 'req'],
+    ['hybm Entity', 'smem_bm', 'export slice：GVA + memKey', 'ret'],
+    ['App', 'smem_bm', 'smem_bm_join()', 'req'],
+    ['smem_bm', 'GroupMgr / Store', 'Join(RankFullInfo：entity + slices)', 'req'],
+    ['GroupMgr / Store', 'GroupMgr / Store', 'rank → CHECKED_IN', 'self'],
+    ['GroupMgr / Store', 'Peer rank', 'Exchange Info（entity / slice）', 'async'],
+    ['Peer rank', 'GroupMgr / Store', 'EXCHANGING → EXCHANGED', 'async'],
+    ['GroupMgr / Store', 'smem_bm', 'OnEstablishConnection(rankIds)', 'async'],
+    ['smem_bm', 'hybm Entity', 'hybm_mmap(entity, 0)', 'req'],
+    ['hybm Entity', 'Transport', 'import memKey / HAL map', 'req'],
+    ['Transport', 'Peer rank', 'hybm_transport_connect(ranks)', 'req'],
+    ['Peer rank', 'Transport', 'QP / URMA connected', 'ret'],
+    ['Transport', 'GroupMgr / Store', 'link CONNECTING → CONNECTED', 'async'],
+    ['GroupMgr / Store', 'smem_bm', 'PROMOTE_TO_ACTIVE', 'ret'],
+    ['App', 'smem_bm', 'smem_bm_copy(srcGVA, dstGVA, size)', 'req'],
+    ['smem_bm', 'hybm Entity', 'hybm_data_copy → DataOperator', 'req']
+  ];
+  let seqN = 0, seqTimer = 0;
+
+  function showSeq(n) {
+    seqN = Math.max(0, Math.min(SEQ.length, n));
+    if (seqStep) seqStep.textContent = seqN + ' / ' + SEQ.length;
+    $$('.seq-msg', seqSvg).forEach((g, i) => {
+      g.classList.toggle('on', i < seqN);
+      g.classList.toggle('active', i === seqN - 1);
+    });
+    $$('.actor', seqSvg).forEach(g => g.classList.remove('speaking'));
+    if (seqN > 0) {
+      const m = SEQ[seqN - 1];
+      [m[0], m[1]].forEach(name => {
+        const g = $('.actor[data-a="' + ACT.indexOf(name) + '"]', seqSvg);
+        if (g) g.classList.add('speaking');
+      });
+    }
+  }
+
+  function stopSeq() {
+    if (seqTimer) { clearInterval(seqTimer); seqTimer = 0; }
+    const b = $('#seqPlay');
+    if (b) b.textContent = '播放';
+  }
+
+  if (seqSvg) {
+    const H = 92 + SEQ.length * 36 + 26;
+    const X = i => 88 + i * 164;
+    const idx = name => ACT.indexOf(name);
+    let s = '<defs>';
+    const mk = (id, color) => '<marker id="' + id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ' +
+      'markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="' + color + '"/></marker>';
+    s += mk('arReq', '#4cb8ff') + mk('arRet', '#7fa6cf') + mk('arAsync', '#8b7cff') + mk('arSelf', '#3ce6a8');
+    s += '</defs>';
+
+    [[0, 4, 'INIT'], [4, 9, 'CREATE / JOIN'], [9, 20, 'MESH'], [20, 22, 'DATA']].forEach((b, i) => {
+      const y = 68 + b[0] * 36;
+      s += '<rect class="phase-band' + (i % 2 ? ' alt' : '') + '" x="8" y="' + y + '" width="984" height="' +
+        (b[1] - b[0]) * 36 + '" rx="6"/>';
+      s += '<text class="phase-txt" x="16" y="' + (y + 13) + '">' + b[2] + '</text>';
+    });
+
+    ACT.forEach((name, i) => {
+      const x = X(i);
+      s += '<g class="actor" data-a="' + i + '"><rect x="' + (x - 66) + '" y="18" width="132" height="34" rx="9"/>' +
+        '<text x="' + x + '" y="40" text-anchor="middle">' + name + '</text></g>';
+      s += '<line class="lifeline" x1="' + x + '" y1="52" x2="' + x + '" y2="' + (H - 14) + '"/>';
+    });
+
+    SEQ.forEach((m, i) => {
+      const y = 88 + i * 36;
+      const x1 = X(idx(m[0])), x2 = X(idx(m[1]));
+      const type = m[3];
+      const marker = type === 'ret' ? 'arRet' : (type === 'async' ? 'arAsync' : (type === 'self' ? 'arSelf' : 'arReq'));
+      let path, tx, ty, anchor = 'middle';
+      if (type === 'self') {
+        path = 'M ' + x1 + ' ' + (y - 9) + ' h 42 v 18 h -42';
+        tx = x1 + 50; ty = y + 4; anchor = 'start';
+      } else {
+        path = 'M ' + x1 + ' ' + y + ' L ' + x2 + ' ' + y;
+        tx = (x1 + x2) / 2; ty = y - 6;
+      }
+      s += '<g class="seq-msg ' + type + '" data-i="' + i + '">' +
+        '<path class="msg-line" d="' + path + '" marker-end="url(#' + marker + ')"/>' +
+        '<text class="msg-txt" x="' + tx + '" y="' + ty + '" text-anchor="' + anchor + '">' + m[2] + '</text></g>';
+    });
+
+    seqSvg.setAttribute('viewBox', '0 0 1000 ' + H);
+    seqSvg.innerHTML = s;
+    showSeq(3);
+
+    $('#seqPlay').addEventListener('click', () => {
+      if (seqTimer) { stopSeq(); return; }
+      if (seqN >= SEQ.length) showSeq(0);
+      $('#seqPlay').textContent = '暂停';
+      seqTimer = setInterval(() => {
+        if (seqN >= SEQ.length) { stopSeq(); return; }
+        showSeq(seqN + 1);
+      }, 900);
+    });
+    $('#seqPrev').addEventListener('click', () => { stopSeq(); showSeq(seqN - 1); });
+    $('#seqNext').addEventListener('click', () => { stopSeq(); showSeq(seqN + 1); });
+    $('#seqReset').addEventListener('click', () => { stopSeq(); showSeq(0); });
+  }
+
+  /* ---------------- data plane sequence diagrams ---------------- */
+  function mountSeq(svg, cfg) {
+    if (!svg) return;
+    const ACTS = cfg.actors, STEPS = cfg.steps;
+    const W = 1000, PADX = 92, GAP = 34, TOP = 88;
+    const total = STEPS.length;
+    const stepX = (W - PADX * 2) / Math.max(1, ACTS.length - 1);
+    const lblW = Math.min(132, Math.max(96, stepX - 10));
+    const X = i => PADX + i * stepX;
+    const H = TOP + total * GAP + 28;
+    const pre = cfg.key;
+    const mk = (id, color) => '<marker id="' + id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ' +
+      'markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="' + color + '"/></marker>';
+
+    let s = '<defs>' + mk(pre + 'Req', '#4cb8ff') + mk(pre + 'Ret', '#7fa6cf') +
+      mk(pre + 'Async', '#8b7cff') + mk(pre + 'Self', '#3ce6a8') + '</defs>';
+
+    (cfg.phases || []).forEach((b, i) => {
+      const y = TOP - 20 + b[0] * GAP;
+      s += '<rect class="phase-band' + (i % 2 ? ' alt' : '') + '" x="8" y="' + y + '" width="984" height="' +
+        ((b[1] - b[0]) * GAP - 4) + '" rx="6"/>';
+      s += '<text class="phase-txt" x="982" y="' + (y + 13) + '" text-anchor="end">' + b[2] + '</text>';
+    });
+
+    ACTS.forEach((name, i) => {
+      const x = X(i);
+      s += '<g class="actor" data-a="' + i + '"><rect x="' + (x - lblW / 2) + '" y="18" width="' + lblW +
+        '" height="34" rx="9"/><text x="' + x + '" y="40" text-anchor="middle">' + name + '</text></g>';
+      s += '<line class="lifeline" x1="' + x + '" y1="52" x2="' + x + '" y2="' + (H - 16) + '"/>';
+    });
+
+    STEPS.forEach((m, i) => {
+      const y = TOP + i * GAP;
+      const x1 = X(ACTS.indexOf(m[0])), x2 = X(ACTS.indexOf(m[1]));
+      const type = m[3];
+      const marker = pre + (type === 'ret' ? 'Ret' : (type === 'async' ? 'Async' : (type === 'self' ? 'Self' : 'Req')));
+      let path, tx, ty, anchor = 'middle';
+      if (type === 'self') {
+        path = 'M ' + x1 + ' ' + (y - 9) + ' h 42 v 18 h -42';
+        if (x1 > 500) { tx = x1 - 8; ty = y - 6; anchor = 'end'; }
+        else { tx = x1 + 50; ty = y + 4; anchor = 'start'; }
+      } else {
+        path = 'M ' + x1 + ' ' + y + ' L ' + x2 + ' ' + y;
+        tx = (x1 + x2) / 2; ty = y - 6;
+      }
+      s += '<g class="seq-msg ' + type + '"><path class="msg-line" d="' + path + '" marker-end="url(#' + marker +
+        ')"/><text class="msg-txt" x="' + tx + '" y="' + ty + '" text-anchor="' + anchor + '">' + m[2] + '</text></g>';
+    });
+
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.innerHTML = s;
+
+    let n = 0, timer = 0;
+    const stepEl = document.getElementById(cfg.step);
+    const playBtn = document.getElementById(pre + 'Play');
+
+    const show = k => {
+      n = Math.max(0, Math.min(total, k));
+      if (stepEl) stepEl.textContent = n + ' / ' + total;
+      $$('.seq-msg', svg).forEach((g, i) => {
+        g.classList.toggle('on', i < n);
+        g.classList.toggle('active', i === n - 1);
+      });
+      $$('.actor', svg).forEach(g => g.classList.remove('speaking'));
+      if (n > 0) {
+        const m = STEPS[n - 1];
+        [m[0], m[1]].forEach(name => {
+          const g = $('.actor[data-a="' + ACTS.indexOf(name) + '"]', svg);
+          if (g) g.classList.add('speaking');
+        });
+      }
+    };
+
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = 0; }
+      if (playBtn) playBtn.textContent = '播放';
+    };
+    const bind = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener('click', fn); };
+
+    if (playBtn) {
+      playBtn.addEventListener('click', () => {
+        if (timer) { stop(); return; }
+        if (n >= total) show(0);
+        playBtn.textContent = '暂停';
+        timer = setInterval(() => {
+          if (n >= total) { stop(); return; }
+          show(n + 1);
+        }, 950);
+      });
+    }
+    bind(pre + 'Prev', () => { stop(); show(n - 1); });
+    bind(pre + 'Next', () => { stop(); show(n + 1); });
+    bind(pre + 'Reset', () => { stop(); show(0); });
+    show(cfg.start || 0);
+  }
+
+  mountSeq($('#l2gSvg'), {
+    key: 'l2g', step: 'l2gStep', start: 2,
+    actors: ['App', 'smem_bm', 'hybm Entity', 'ComposeDataOp', 'HostDataOpSDMA', 'Device stream'],
+    phases: [[0, 3, '入口与方向判定'], [3, 7, '算子链选择'], [7, 12, 'SDMA 搬移'], [12, 14, '返回']],
+    steps: [
+      ['App', 'smem_bm', 'smem_bm_copy(h, {src,dst,size}, SMEMB_COPY_L2G, 0)', 'req'],
+      ['smem_bm', 'smem_bm', 'SmemBmEntry::DataCopy 参数校验', 'self'],
+      ['smem_bm', 'smem_bm', 'TransToHybmDirection → LOCAL_DEVICE_TO_GLOBAL_DEVICE', 'self'],
+      ['smem_bm', 'hybm Entity', 'hybm_data_copy(entity, params, direction, stream, flags)', 'req'],
+      ['hybm Entity', 'hybm Entity', 'SetThreadAclDevice；LocateAddrAndRank → 两端均为本 rank', 'self'],
+      ['hybm Entity', 'ComposeDataOp', 'HostComposeDataOp::DataCopy(direction, ExtOptions)', 'req'],
+      ['ComposeDataOp', 'ComposeDataOp', 'GetPrioritedDataOperators：同 rank 命中 SDMA，无传输算子', 'self'],
+      ['ComposeDataOp', 'HostDataOpSDMA', 'HostDataOpSDMA::DataCopy', 'req'],
+      ['HostDataOpSDMA', 'HostDataOpSDMA', 'TransformVa；LD→GD → CopyG2G(dest, src, size)', 'self'],
+      ['HostDataOpSDMA', 'Device stream', 'InitG2GStreamTask + GetThreadHybmStream → SubmitTasks', 'req'],
+      ['Device stream', 'Device stream', 'MTE / AIV copy kernel 搬移 HBM 页', 'self'],
+      ['Device stream', 'HostDataOpSDMA', 'Synchronize() 等待 stream 完成', 'ret'],
+      ['HostDataOpSDMA', 'smem_bm', 'BM_OK（同步返回即可见）', 'ret'],
+      ['smem_bm', 'App', 'SM_OK', 'ret']
+    ]
+  });
+
+  mountSeq($('#d2rhSvg'), {
+    key: 'd2rh', step: 'd2rhStep', start: 2,
+    actors: ['App', 'smem_bm', 'hybm Entity', 'ComposeDataOp', 'DataOpDeviceURMA', 'TransportManager', 'Peer rank'],
+    phases: [[0, 3, '入口与方向判定'], [3, 6, '算子选择'], [6, 11, '地址转换与发起'], [11, 16, '单边写与完成'],
+      [16, 17, '返回']],
+    steps: [
+      ['App', 'smem_bm', 'smem_bm_copy(h, {src,dst,size}, SMEMB_COPY_D2RH, 0)', 'req'],
+      ['smem_bm', 'smem_bm', 'TransToHybmDirection → LOCAL_DEVICE_TO_GLOBAL_HOST', 'self'],
+      ['smem_bm', 'hybm Entity', 'hybm_data_copy(entity, params, direction, stream, flags)', 'req'],
+      ['hybm Entity', 'hybm Entity', 'LocateAddrAndRank(dst)：destRank = 1，srcRank = 0', 'self'],
+      ['hybm Entity', 'ComposeDataOp', 'HostComposeDataOp::DataCopy(direction, ExtOptions)', 'req'],
+      ['ComposeDataOp', 'ComposeDataOp', 'GetPrioritedDataOperators：DEVICE_URMA 在 rank2RankOpType 中', 'self'],
+      ['ComposeDataOp', 'DataOpDeviceURMA', 'DataOpDeviceURMA::DataCopy', 'req'],
+      ['DataOpDeviceURMA', 'DataOpDeviceURMA', 'IsSupportedUrmaDirection ✓；TransformVa 仅转本地 src', 'self'],
+      ['DataOpDeviceURMA', 'DataOpDeviceURMA', 'CopyLD2GH → destRank ≠ rankId → SafePut', 'self'],
+      ['DataOpDeviceURMA', 'DataOpDeviceURMA', 'QueryHasRegistered：未注册则经 swap 中转 CopyLD2LD', 'self'],
+      ['DataOpDeviceURMA', 'TransportManager', 'WriteRemote(destRankId=1, src, dst, len)', 'req'],
+      ['TransportManager', 'TransportManager', 'RemoteIo：组装 WQE（远端内存键 + 地址）并敲 doorbell', 'self'],
+      ['TransportManager', 'Peer rank', '单边写：NIC 直接落盘远端 DRAM', 'async'],
+      ['Peer rank', 'TransportManager', 'CQE 完成事件', 'async'],
+      ['TransportManager', 'DataOpDeviceURMA', 'Synchronize(rankId) → BM_OK', 'ret'],
+      ['DataOpDeviceURMA', 'smem_bm', '释放 swap / 临时资源', 'ret'],
+      ['smem_bm', 'App', 'SM_OK（远端 CPU 不参与）', 'ret']
+    ]
+  });
+
+  /* ---------------- state machine ---------------- */
+  const RANK_STATES = ['IDLE', 'CHECKED_IN', 'ACTIVE'];
+  const LINK_STATES = ['IDLE', 'EXCHANGING', 'EXCHANGED', 'CONNECTING', 'CONNECTED'];
+  let smBusy = false;
+
+  function paintState(kind, states, index) {
+    $$('.state[data-sm="' + kind + '"]').forEach(el => {
+      const i = states.indexOf(el.dataset.s);
+      el.classList.toggle('done', i > -1 && i < index);
+      el.classList.toggle('on', i === index);
+    });
+  }
+
+  async function runSM() {
+    if (smBusy) return;
+    smBusy = true;
+    const log = $('#smLog');
+    const lines = [];
+    const add = (text, cls) => {
+      lines.push('<span class="' + (cls || '') + '">' + text + '</span>');
+      log.innerHTML = lines.join('\n');
+    };
+    log.innerHTML = '';
+    paintState('rank', RANK_STATES, -1);
+    paintState('link', LINK_STATES, -1);
+    add('[00.000] server: rank 0..N join request received', 'warn');
+    await sleep(420);
+
+    for (let i = 0; i < RANK_STATES.length; i++) {
+      paintState('rank', RANK_STATES, i);
+      add('[rank] → ' + RANK_STATES[i]);
+      await sleep(520);
+    }
+    add('[link] start directed link negotiation (rank 0 → rank 1)', 'warn');
+    await sleep(300);
+
+    for (let i = 0; i < LINK_STATES.length; i++) {
+      paintState('link', LINK_STATES, i);
+      add('[link 0→1] → ' + LINK_STATES[i]);
+      await sleep(520);
+    }
+    add('[OK] both ranks ACTIVE, links CONNECTED; data plane ready', 'ok');
+    smBusy = false;
+  }
+
+  const smRun = $('#smRun');
+  if (smRun) smRun.addEventListener('click', runSM);
+
+  /* ---------------- dispatch flow ---------------- */
+  const FLOW = {
+    local: {
+      hot: [0, 1, 3, 4, 5],
+      note: '<b>同机 L2G：</b>地址未跨出本机窗口，方向判定后由 SDMA / MTE 直接搬运，不涉及远端 rank 定位与传输连接。'
+    },
+    d2rh: {
+      hot: [0, 1, 2, 3, 4, 5],
+      note: '<b>跨机 D2RH：</b>完整路径。方向判定后由 GVA 解析出 rank 1，按 Device 侧算子处理，并以 (srcRank,dstRank) 分组批量下发。'
+    },
+    rh2d: {
+      hot: [0, 1, 2, 3, 4, 5],
+      note: '<b>跨机 RH2D：</b>编排过程与 D2RH 相同，源为对端 DRAM、目的为本机 HBM，数据传输方向相反。'
+    },
+    batch: {
+      hot: [0, 1, 2, 3, 4, 5],
+      note: '<b>批量多目标：</b>先按 (srcRank,dstRank) 聚合为 groupMap，再为每组选择算子，一次调用可覆盖多个远端 rank。'
+    }
+  };
+
+  $$('#flowBtns .btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cfg = FLOW[btn.dataset.flow];
+      if (!cfg) return;
+      $$('#flowBtns .btn').forEach(b => b.classList.remove('primary'));
+      btn.classList.add('primary');
+      $$('#flowSteps .flow-step').forEach(step => {
+        step.classList.toggle('hot', cfg.hot.includes(Number(step.dataset.fi)));
+      });
+      $('#flowNote').innerHTML = cfg.note;
+    });
+  });
+
+  /* ---------------- sparse copy comparison ---------------- */
+  const cmpSvg = $('#cmpSvg');
+  let cmpRaf = 0;
+  const cmpStat = $('#cmpStat');
+
+  if (cmpSvg) {
+    const N = 6;
+    const AX0 = 220;
+    const AX1 = 960;
+    const SPAN = AX1 - AX0;
+    const WIN = 400;
+    const T_END = WIN * N;
+    const B_END = 800;
+    const ax = t => AX0 + SPAN * Math.min(1, t / T_END);
+    const bw = (t0, t1) => Math.max(2, ax(t1) - ax(t0));
+
+    let s = '';
+    for (let i = 0; i <= N; i++) {
+      const gx = ax(i * WIN);
+      s += '<line class="grid" x1="' + gx + '" y1="52" x2="' + gx + '" y2="162"/>';
+      s += '<line class="grid" x1="' + gx + '" y1="222" x2="' + gx + '" y2="432"/>';
+      s += '<text class="axis" x="' + gx + '" y="458">' + i + '</text>';
+    }
+    s += '<text class="lane-s" x="20" y="458">时间窗</text>';
+    s += '<line class="grid base" x1="' + AX0 + '" y1="444" x2="' + AX1 + '" y2="444"/>';
+
+    s += '<text class="lane-tag" x="20" y="24">A</text>';
+    s += '<text class="lane-t" x="38" y="26">逐段调用 · 串行</text>';
+    s += '<text class="lane-s" x="38" y="43">每段一次 host 调用与一个 stream 任务，段间无重叠</text>';
+
+    const A_ROWS = [[66, 'host 调用'], [94, 'stream 任务'], [122, 'DMA 搬运'], [150, '段完成']];
+    A_ROWS.forEach(r => {
+      s += '<text class="rl" x="208" y="' + (r[0] + 3.5) + '">' + r[1] + '</text>';
+    });
+
+    function addBar(kind, t0, t1, cy, h, w) {
+      s += '<rect class="bar ' + kind + '" x="' + ax(t0) + '" y="' + (cy - h / 2) + '" width="' +
+        (w || bw(t0, t1)).toFixed(1) + '" height="' + h + '" rx="3" data-t0="' + t0 + '" data-t1="' + t1 + '"/>';
+    }
+
+    for (let i = 0; i < N; i++) {
+      const t = i * WIN;
+      addBar('a', t, t + 120, 66, 13);
+      addBar('a', t + 120, t + 200, 94, 13);
+      addBar('a', t + 200, t + 390, 122, 13);
+      addBar('a', t + 390, t + 400, 150, 9, 8);
+      s += '<text class="bar-t" x="' + ((ax(t + 200) + ax(t + 390)) / 2) + '" y="125.5">seg ' + i + '</text>';
+    }
+
+    s += '<line class="grid" x1="20" y1="178" x2="980" y2="178"/>';
+    s += '<text class="lane-tag" x="20" y="198">B</text>';
+    s += '<text class="lane-t" x="38" y="200">单次稀疏拷贝 · 并发</text>';
+    s += '<text class="lane-s" x="38" y="217">四个 device 指针一次下发，48 / 64 个 AIV 核按字节区间并行</text>';
+
+    const B_ROWS = [[232, 'host 调用'], [258, 'kernel 下发'], [284, 'Init 分支 / 字节切分']];
+    B_ROWS.forEach(r => {
+      s += '<text class="rl" x="208" y="' + (r[0] + 3.5) + '">' + r[1] + '</text>';
+    });
+    s += '<text class="rl" x="208" y="322">CopyIn（GM→UB）</text>';
+    s += '<text class="rl" x="208" y="376">CopyOut（UB→GM）</text>';
+    s += '<text class="rl" x="208" y="423.5">全核完成</text>';
+
+    addBar('b', 0, 120, 232, 13);
+    addBar('b', 120, 200, 258, 13);
+    addBar('b', 200, 240, 284, 13);
+    for (let i = 0; i < N; i++) {
+      addBar('b', 240, 500, 298 + i * 8, 5);
+      addBar('b', 500, 760, 352 + i * 8, 5);
+    }
+    addBar('b', 760, 800, 420, 13);
+
+    s += '<line id="cmpPh" x1="' + AX0 + '" y1="52" x2="' + AX0 + '" y2="432" stroke="rgba(60,230,168,.65)"' +
+      ' stroke-width="1.5" stroke-dasharray="4 4" opacity="0"/>';
+    cmpSvg.innerHTML = s;
+
+    const bars = $$('.bar', cmpSvg).map(el => ({
+      el: el,
+      t0: Number(el.dataset.t0),
+      t1: Number(el.dataset.t1)
+    }));
+    const ph = $('#cmpPh');
+
+    function bPhase(t) {
+      if (t < 120) return 'host 调用';
+      if (t < 200) return 'kernel 下发';
+      if (t < 240) return 'Init 分支与字节切分';
+      if (t < 500) return 'AIV CopyIn（GM→UB）';
+      if (t < 760) return 'AIV CopyOut（UB→GM）';
+      if (t < B_END) return '全核完成提交';
+      return '已完成';
+    }
+
+    function renderCmp(elapsed) {
+      bars.forEach(b => {
+        b.el.classList.toggle('on', elapsed >= b.t0 && elapsed < b.t1);
+        b.el.classList.toggle('ok', elapsed >= b.t1);
+      });
+
+      const running = elapsed > 0 && elapsed < T_END;
+      ph.setAttribute('opacity', running ? '1' : '0');
+      const px = ax(elapsed).toFixed(1);
+      ph.setAttribute('x1', px);
+      ph.setAttribute('x2', px);
+
+      const ai = Math.min(N - 1, Math.floor(elapsed / WIN));
+      const ap = elapsed - ai * WIN;
+      const aName = elapsed >= T_END ? '已完成' :
+        ap < 120 ? 'host 调用' : ap < 200 ? 'stream 任务下发' : ap < 390 ? 'DMA 搬运' : '段完成';
+
+      if (elapsed < B_END) {
+        cmpStat.textContent = 'A 第 ' + (ai + 1) + ' 段：' + aName + ' · B：' + bPhase(elapsed);
+      } else if (elapsed < T_END) {
+        cmpStat.textContent = 'B 已完成（1 次下发 / 2 个时间窗）· A 进行到第 ' + (ai + 1) + ' 段：' + aName;
+      } else {
+        cmpStat.textContent = '完成：B 1 次下发 / 2 个时间窗，A 6 次下发 / 6 个时间窗（同一时间轴，示意比例）';
+      }
+    }
+
+    function resetCmp() {
+      if (cmpRaf) {
+        cancelAnimationFrame(cmpRaf);
+        cmpRaf = 0;
+      }
+      bars.forEach(b => b.el.classList.remove('on', 'ok'));
+      ph.setAttribute('opacity', '0');
+      ph.setAttribute('x1', AX0);
+      ph.setAttribute('x2', AX0);
+      cmpStat.textContent = '两条泳道搬运相同的 6 个离散段，共用同一时间轴；每格为 1 个示意时间窗。';
+      $('#cmpRun').disabled = false;
+    }
+
+    $('#cmpRun').addEventListener('click', () => {
+      resetCmp();
+      if (reduce) {
+        renderCmp(T_END);
+        return;
+      }
+      const btn = $('#cmpRun');
+      btn.disabled = true;
+      const t0 = performance.now();
+      function tick(t) {
+        const e = t - t0;
+        renderCmp(Math.min(e, T_END));
+        if (e < T_END) {
+          cmpRaf = requestAnimationFrame(tick);
+        } else {
+          cmpRaf = 0;
+          btn.disabled = false;
+        }
+      }
+      cmpRaf = requestAnimationFrame(tick);
+    });
+    $('#cmpReset').addEventListener('click', resetCmp);
+
+    resetCmp();
+  }
+
+  /* ---------------- code map ---------------- */
+  const CODE = {
+    root: {
+      title: 'MemFabric Hybrid',
+      stats: '372 C/C++ files · 94,525 lines · v1.5.0',
+      desc: '以 GVA 为统一抽象的内存池化软件：北向提供 BM / TRANS / SHM / Offload 语义，南向通过可插拔传输覆盖 Device 与 Host 链路。',
+      list: [
+        'src/smem：语义层与北向 C/Python API，产物 libmf_smem.so。',
+        'src/hybm：地址、内存段、传输与数据算子，产物 libmf_hybm_core.so。',
+        'src/acc_offload：KV Cache 卸载与卡侧稀疏拷贝。',
+        'src/acc_links：控制通道、TLS 与连接管理。',
+        'src/util：etcd Go 后端、日志、环境变量与通用工具。'
+      ],
+      files: [['README.md', 'README'], ['src/', 'src/'], ['docs/zh/feature.md', 'feature.md'], ['AGENTS.md', 'AGENTS.md']]
+    },
+    smem: {
+      title: 'src/smem · 语义与接口层',
+      stats: '102 files · 28,371 lines · libmf_smem.so',
+      desc: '将业务语义翻译为 hybm 模型。BM 管理池化与 GVA 拷贝，TRANS 管理注册内存传输，SHM 管理同机算子共享；config_store 提供控制面。',
+      list: [
+        'smem_bm：6 files / 2,654 lines。初始化、创建、加入、拷贝、释放。',
+        'smem_trans：5 files / 2,095 lines。注册内存与点对点传输。',
+        'smem_shm：5 files / 1,104 lines。同机共享内存与卡侧基址。',
+        'config_store：45 files / 13,846 lines。TCP Store、Group Manager、HA。',
+        'net / python_wrapper / common：2,223 + 2,208 + 1,068 lines。'
+      ],
+      files: [
+        ['src/smem/csrc/smem_bm/smem_bm.cpp', 'smem_bm.cpp'],
+        ['src/smem/csrc/smem_bm/smem_bm_entry.cpp', 'smem_bm_entry.cpp'],
+        ['src/smem/csrc/smem_bm/smem_bm_entry_manager.cpp', 'entry_manager.cpp'],
+        ['src/smem/csrc/config_store/tcp_store/smem_group_manager_server.h', 'group_manager_server.h'],
+        ['src/smem/python/memfabric_hybrid/memfabric_hybrid/__init__.py', '__init__.py']
+      ]
+    },
+    hybm: {
+      title: 'src/hybm · 内存与传输核心',
+      stats: '169 files · 47,547 lines · libmf_hybm_core.so',
+      desc: '向上提供 entity 与数据拷贝接口，向下封装 ACL、HAL、HCCP、HCOM；内部维护地址表、内存段与传输连接。',
+      list: [
+        'transport：56 files / 18,914 lines。HCOM、HCCP、SDMA、COMPOSE。',
+        'under_api：28 files / 7,538 lines。驱动与运行时接口封装。',
+        'mm：18 files / 6,670 lines。GVA/DVA/HVA 与 12 种方向。',
+        'data_operation：15 files / 5,643 lines。算子编排、分组与降级。',
+        'entity / ts_engine / driver / common：2,094 + 1,502 + 1,711 + 1,677 lines。'
+      ],
+      files: [
+        ['src/hybm/csrc/entity/hybm_entity.h', 'hybm_entity.h'],
+        ['src/hybm/csrc/entity/hybm_entity_default.h', 'entity_default.h'],
+        ['src/hybm/csrc/mm/hybm_va_manager.h', 'va_manager.h'],
+        ['src/hybm/csrc/common/hybm_define.h', 'hybm_define.h'],
+        ['src/hybm/csrc/transport/protocol/hybm_transport_manager.h', 'transport_manager.h'],
+        ['src/hybm/csrc/data_operation/host/hybm_compose_data_op.cpp', 'compose_data_op.cpp']
+      ]
+    },
+    offload: {
+      title: 'src/acc_offload · KV Cache 卸载',
+      stats: '26 files · 3,963 lines · libmf_acc_offload.so',
+      desc: '从预留 DRAM 池分配内存，通过卡侧 AscendC 稀疏拷贝算子搬运多个离散块，支持 LOCAL 与 SHARED 两种池化方式。',
+      list: [
+        'offload_malloc / offload_free：池内分配与释放。',
+        'offload_sparse_copy：地址数组 + 长度数组 + 任务数，一次下发。',
+        'LOCAL：每 rank 一份 DRAM，reserveSize = allocSize。',
+        'SHARED：多 rank 共享同一份 DRAM 池，通过 storeUrl 汇聚。'
+      ],
+      files: [
+        ['src/acc_offload/', 'src/acc_offload/'],
+        ['src/smem/include/device/smem_shm_aicore_base_api.h', 'shm_aicore_base_api.h'],
+        ['examples/', 'examples/']
+      ]
+    },
+    links: {
+      title: 'src/acc_links · 控制通道',
+      stats: '47 files · 9,010 lines',
+      desc: '承载控制面通信：TCP/HTTP 服务端与客户端、TLS、连接生命周期与消息编解码，为 Group Manager 与 Store 提供传输。',
+      list: [
+        'TCP / HTTP 控制通道与端口管理。',
+        'TLS 配置与握手。',
+        '连接建立、保活、断链检测与重连。',
+        '消息序列化与请求路由。'
+      ],
+      files: [['src/acc_links/', 'src/acc_links/'], ['docs/zh/config_store_cluster_ha.md', 'cluster HA']]
+    },
+    util: {
+      title: 'src/util · 通用能力',
+      stats: '28 files · 5,634 lines（含 Go / Python）',
+      desc: '跨模块复用的基础设施：etcd Go 后端、日志、环境变量、线程与锁工具、性能打点。',
+      list: [
+        'etcd_client：Go 编译为 c-shared，提供 KV、watch、租约与选主。',
+        'smem_logger / 日志宏：分级日志与格式化约束。',
+        'mf_env_util：环境变量读取与默认值。',
+        'ptracer：关键路径性能打点。'
+      ],
+      files: [
+        ['src/util/etcd_client/etcd_store_backend/', 'etcd backend'],
+        ['docs/zh/etcd_store_backend.md', 'etcd docs'],
+        ['docs/zh/config_store_cluster_ha.md', 'HA docs']
+      ]
+    },
+    include: {
+      title: '公共头文件与 API',
+      stats: 'C API · Python API · 设备侧头文件',
+      desc: '对外接口定义：C 结构体、错误码、copy type 与 flags，以及 Python 包的导出面。',
+      list: [
+        'src/smem/include/host：SMEM BM / TRANS / SHM 的 C 头文件。',
+        'src/hybm/include：hybm 的公共接口。',
+        'src/smem/include/device：卡侧 AICore 基址与 SHM 接口。',
+        'Python：TransferEngine、TransferOpcode、bm / shm / offload 等。'
+      ],
+      files: [
+        ['src/smem/include/host/', 'smem host headers'],
+        ['src/hybm/include/', 'hybm headers'],
+        ['src/smem/include/device/smem_shm_aicore_base_api.h', 'device api'],
+        ['docs/zh/API.md', 'API.md']
+      ]
+    },
+    app: {
+      title: 'app + examples · 消费者',
+      stats: 'ZBAL · TensorRTL · examples',
+      desc: '真实业务与最小样例，仅依赖北向 API，用于验证池化内存在推理、推荐与集合通信场景中的表现。',
+      list: [
+        'ZBAL：昇腾集群应用实践。',
+        'TensorRTL：推荐 / 大模型推理场景。',
+        'examples：BM、TRANS、SHM、Offload 的最小可运行代码。',
+        'benchmark：带宽与时延测试。'
+      ],
+      files: [['app/zbal/', 'zbal'], ['app/tensorRTL/', 'tensorRTL'], ['examples/', 'examples'], ['README.md', 'README']]
+    },
+    test: {
+      title: 'test/ut · 单元测试',
+      stats: '105 C/C++ files · googletest + mockcpp',
+      desc: '覆盖地址管理、传输、数据算子、控制面状态机与 Offload。run_ut.sh 统一构建并统计覆盖率。',
+      list: [
+        '按模块组织 testcase，配合 mockcpp 打桩驱动 API。',
+        '默认 ASAN + 覆盖率：lines ≥ 70%，branches ≥ 40%。',
+        'aarch64 上 ASAN 与 mockcpp 冲突时改用 DEBUG。',
+        'AccLinksTest 使用固定端口 8100，需避免占用。'
+      ],
+      files: [
+        ['test/ut/testcase/', 'testcase/'],
+        ['test/ut/testcase/acc_links/acc_links_test.cpp', 'acc_links_test.cpp'],
+        ['script/run_ut.sh', 'run_ut.sh']
+      ]
+    },
+    script: {
+      title: 'script + docs · 构建与文档',
+      stats: 'wrapper 脚本 · CMake / Bazel · 中文文档',
+      desc: '一键构建、打包、运行与测试；文档覆盖特性、API、环境变量、etcd 后端与编码规范。',
+      list: [
+        'build_and_pack_run.sh：RELEASE 默认，支持 Debug / XPU_TYPE / HCOM / etcd。',
+        'run_ut.sh：全量与 --fast 增量测试。',
+        'ci-pre-commit-pr.sh：PR 风格检查。',
+        'docs/zh：特性、API、环境变量、HA 与编码规范。'
+      ],
+      files: [
+        ['script/build_and_pack_run.sh', 'build_and_pack_run.sh'],
+        ['script/run_ut.sh', 'run_ut.sh'],
+        ['docs/zh/feature.md', 'feature.md'],
+        ['docs/zh/environment_variables.md', 'env vars']
+      ]
+    }
+  };
+
+  function renderCode(key) {
+    const d = CODE[key];
+    if (!d) return;
+    const box = $('#codeDetail');
+    box.innerHTML =
+      '<h3>' + d.title + '</h3>' +
+      '<div class="stats">' + d.stats + '</div>' +
+      '<p>' + d.desc + '</p>' +
+      '<ul>' + d.list.map(x => '<li>' + x + '</li>').join('') + '</ul>' +
+      '<div class="files">' + d.files.map(f => fileLink(f[0], f[1])).join('') + '</div>';
+  }
+
+  $$('.tree button[data-mod]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $$('.tree button[data-mod]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderCode(btn.dataset.mod);
+    });
+  });
+  if ($('#codeDetail')) renderCode('root');
+
+  /* ---------------- global code structure ---------------- */
+  const gcSvg = $('#gcSvg');
+  if (gcSvg) {
+    const cap = $('#gcCap');
+    const BASE = cap ? cap.textContent : '';
+    const clear = () => {
+      $$('.gc-box', gcSvg).forEach(g => g.classList.remove('hot'));
+      $$('.layer', gcSvg).forEach(g => g.classList.remove('hot'));
+      if (cap) cap.textContent = BASE;
+    };
+    const focusBox = g => {
+      clear();
+      g.classList.add('hot');
+      const band = $('.layer[data-layer="' + g.dataset.layer + '"]', gcSvg);
+      if (band) band.classList.add('hot');
+      if (cap) cap.textContent = g.dataset.layer + ' · ' + g.dataset.cap;
+    };
+    gcSvg.addEventListener('mouseover', e => {
+      const g = e.target.closest ? e.target.closest('g.gc-box') : null;
+      if (g) focusBox(g);
+    });
+    gcSvg.addEventListener('mouseleave', clear);
+    gcSvg.addEventListener('click', e => {
+      const g = e.target.closest ? e.target.closest('g.gc-box') : null;
+      if (!g || !g.dataset.mod) return;
+      const btn = $('.tree button[data-mod="' + g.dataset.mod + '"]');
+      if (btn) {
+        btn.click();
+        const grid = $('.code-grid');
+        if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  }
+
+  /* ---------------- perf bars ---------------- */
+  const perfBox = $('.perf-box');
+  if (perfBox) {
+    const io = new IntersectionObserver(es => {
+      es.forEach(e => {
+        if (!e.isIntersecting) return;
+        $$('.bar i', perfBox).forEach((bar, i) => {
+          setTimeout(() => { bar.style.width = bar.dataset.w + '%'; }, i * 110);
+        });
+        io.disconnect();
+      });
+    }, { threshold: 0.3 });
+    io.observe(perfBox);
+  }
+
+  /* ---------------- copy buttons ---------------- */
+  $$('.copy[data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = btn.dataset.copy || '';
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (err) { /* ignore */ }
+        ta.remove();
+      }
+      const old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = old; }, 1200);
+    });
+  });
+})();
+</script>
+</body>
+</html>
