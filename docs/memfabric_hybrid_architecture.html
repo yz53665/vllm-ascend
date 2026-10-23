@@ -663,7 +663,7 @@
     <div class="gc-figure reveal">
       <div class="gc-bar">
         <span class="gc-title">全局代码结构与调用关系</span>
-        <span class="gc-cap" id="gcCap">上层只调用下层的公开接口，跨层直调仅出现在 smem → hybm 一处。悬停模块查看职责，点击跳转模块详情。</span>
+        <span class="gc-cap" id="gcCap">上层只调用下层的公开接口；跨层直调只有两处：smem → hybm、acc_offload → hybm host API。悬停模块查看职责，点击跳转模块详情。</span>
       </div>
       <div class="gc-scroll">
         <svg class="gc-svg" id="gcSvg" viewBox="0 0 1000 622" role="img" aria-label="MemFabric Hybrid 分层代码结构图">
@@ -711,6 +711,8 @@
           <line class="flow" x1="700" y1="289" x2="700" y2="308" marker-end="url(#gcArr)"/>
           <line class="flow dash" x1="399.5" y1="176" x2="399.5" y2="316" marker-end="url(#gcArr)"/>
           <text class="gap-lbl" x="392" y="304" text-anchor="end">hybm_* 直调</text>
+          <line class="flow dash" x1="987" y1="176" x2="987" y2="316" marker-end="url(#gcArr)"/>
+          <text class="gap-lbl" x="772" y="100">offload 复用 hybm host API 与 smem Store</text>
 
           <text class="gap-lbl" x="112" y="434">dl_* 动态加载：ACL / HAL / HCOMM / Extend</text>
           <line class="flow" x1="420" y1="419" x2="420" y2="438" marker-end="url(#gcArr)"/>
@@ -749,7 +751,7 @@
             <rect class="box" x="552" y="116" width="210" height="60" rx="8"/>
             <text class="bt" x="566" y="140">smem_shm</text><text class="bs" x="566" y="158">同机算子共享</text>
           </g>
-          <g class="gc-box" data-layer="L1" data-mod="offload" data-cap="Offload 实现：AIV 核并行稀疏拷贝，调用 ACL 与算子 launch，不依赖 hybm。">
+          <g class="gc-box" data-layer="L1" data-mod="offload" data-cap="Offload 实现：AIV 核并行稀疏拷贝。内存池与 GVA 复用 hybm 的 host API（create_entity / reserve / alloc / export / mmap），共享池经 smem 的 Store 与 NetGroup 汇聚；数据面不经过 hybm 的 DataOperator 与 Transport。">
             <rect class="box" x="772" y="116" width="210" height="60" rx="8"/>
             <text class="bt" x="786" y="140">acc_offload</text><text class="bs" x="786" y="158">稀疏拷贝算子</text>
           </g>
@@ -2549,12 +2551,13 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
     offload: {
       title: 'src/acc_offload · KV Cache 卸载',
       stats: '26 files · 3,963 lines · libmf_acc_offload.so',
-      desc: '从预留 DRAM 池分配内存，通过卡侧 AscendC 稀疏拷贝算子搬运多个离散块，支持 LOCAL 与 SHARED 两种池化方式。',
+      desc: '从预留 DRAM 池分配内存，通过卡侧 AscendC 稀疏拷贝算子搬运多个离散块。内存池与 GVA 复用 hybm 的 host API，共享池经 smem 的 Store 与 NetGroup 汇聚。',
       list: [
         'offload_malloc / offload_free：池内分配与释放。',
         'offload_sparse_copy：地址数组 + 长度数组 + 任务数，一次下发。',
         'LOCAL：每 rank 一份 DRAM，reserveSize = allocSize。',
-        'SHARED：多 rank 共享同一份 DRAM 池，通过 storeUrl 汇聚。'
+        'SHARED：多 rank 共享同一份 DRAM 池，通过 storeUrl 汇聚。',
+        '池内地址按 rank 槽位线性编址，步长 = 对齐后 reserveSize；共享池 dva == hva == gva。'
       ],
       files: [
         ['src/acc_offload/', 'src/acc_offload/'],
