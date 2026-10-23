@@ -6,20 +6,20 @@
 <title>MemFabric Hybrid · 架构与实现可视化</title>
 <style>
   :root{
-    --bg:#060a12;
-    --bg2:#0a1120;
-    --panel:rgba(14,23,39,.82);
-    --panel2:rgba(10,17,30,.9);
-    --line:rgba(120,170,220,.14);
-    --line2:rgba(120,170,220,.26);
-    --text:#e6eefb;
-    --muted:#8fa3bf;
-    --dim:#5d7290;
-    --mint:#3ce6a8;
-    --cyan:#4cb8ff;
-    --violet:#8b7cff;
-    --gold:#ffc45c;
-    --rose:#ff8ea0;
+    --bg:#f6f9fd;
+    --bg2:#eef3fa;
+    --panel:rgba(255,255,255,.82);
+    --panel2:rgba(255,255,255,.9);
+    --line:rgba(40,80,130,.14);
+    --line2:rgba(40,80,130,.26);
+    --text:#10203a;
+    --muted:#51677f;
+    --dim:#5c7188;
+    --mint:#0b7d59;
+    --cyan:#1a73c9;
+    --violet:#5b4fd6;
+    --gold:#a86b06;
+    --rose:#d0485f;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
     --sans:"PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif;
     --r:18px;
@@ -33,20 +33,20 @@
   body::before{
     content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
     background:
-      radial-gradient(900px 620px at 12% -8%,rgba(60,230,168,.10),transparent 62%),
-      radial-gradient(820px 520px at 92% 6%,rgba(76,184,255,.10),transparent 62%),
-      radial-gradient(900px 700px at 50% 112%,rgba(139,124,255,.09),transparent 62%);
+      radial-gradient(900px 620px at 12% -8%,rgba(14,154,112,.10),transparent 62%),
+      radial-gradient(820px 520px at 92% 6%,rgba(26,115,201,.10),transparent 62%),
+      radial-gradient(900px 700px at 50% 112%,rgba(91,79,214,.09),transparent 62%);
   }
   body::after{
     content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.26;
     background-image:
-      linear-gradient(rgba(120,170,220,.055) 1px,transparent 1px),
-      linear-gradient(90deg,rgba(120,170,220,.055) 1px,transparent 1px);
+      linear-gradient(rgba(40,80,130,.055) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(40,80,130,.055) 1px,transparent 1px);
     background-size:64px 64px;
     -webkit-mask-image:radial-gradient(ellipse at 50% 30%,#000 20%,transparent 78%);
     mask-image:radial-gradient(ellipse at 50% 30%,#000 20%,transparent 78%);
   }
-  ::selection{background:rgba(60,230,168,.28);color:#fff}
+  ::selection{background:rgba(14,154,112,.28);color:#10203a}
   a{color:var(--cyan);text-decoration:none}
   a:hover{text-decoration:underline}
   code,pre,.mono{font-family:var(--mono)}
@@ -54,15 +54,15 @@
   /* progress + nav */
   #progress{position:fixed;top:0;left:0;height:2px;width:0;z-index:80;
     background:linear-gradient(90deg,var(--mint),var(--cyan),var(--violet));
-    box-shadow:0 0 14px rgba(60,230,168,.6)}
+    box-shadow:0 0 14px rgba(14,154,112,.6)}
   .nav{position:fixed;top:0;left:0;right:0;z-index:60;display:flex;align-items:center;gap:26px;
-    padding:12px 28px;background:rgba(6,10,18,.72);backdrop-filter:blur(16px);
+    padding:12px 28px;background:rgba(255,255,255,.72);backdrop-filter:blur(16px);
     border-bottom:1px solid var(--line)}
   .brand{display:flex;align-items:center;gap:11px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
   .brand-mark{width:30px;height:30px;border-radius:9px;position:relative;
     background:linear-gradient(135deg,var(--mint),var(--cyan));
-    box-shadow:0 0 26px rgba(60,230,168,.35)}
-  .brand-mark::before,.brand-mark::after{content:"";position:absolute;border-radius:3px;background:#04121a}
+    box-shadow:0 0 26px rgba(14,154,112,.35)}
+  .brand-mark::before,.brand-mark::after{content:"";position:absolute;border-radius:3px;background:#ffffff}
   .brand-mark::before{width:11px;height:11px;left:6px;top:6px}
   .brand-mark::after{width:7px;height:7px;right:6px;bottom:6px;opacity:.75}
   .brand span{font-size:14px}
@@ -71,16 +71,16 @@
   .nav-links::-webkit-scrollbar{display:none}
   .nav-links a{color:var(--muted);font-size:13px;padding:7px 12px;border-radius:8px;white-space:nowrap;
     transition:color .2s,background .2s}
-  .nav-links a:hover{color:var(--text);background:rgba(120,170,220,.08);text-decoration:none}
-  .nav-links a.active{color:var(--mint);background:rgba(60,230,168,.10)}
+  .nav-links a:hover{color:var(--text);background:rgba(40,80,130,.08);text-decoration:none}
+  .nav-links a.active{color:var(--mint);background:rgba(14,154,112,.10)}
 
   main{position:relative}
   section{max-width:1200px;margin:0 auto;padding:88px 24px}
   .sec-head{max-width:860px;margin-bottom:38px}
   .eyebrow{display:flex;align-items:center;gap:10px;font-size:11px;letter-spacing:2.4px;
     color:var(--dim);font-family:var(--mono);text-transform:uppercase}
-  .eyebrow .num{color:var(--mint);border:1px solid rgba(60,230,168,.35);border-radius:6px;
-    padding:1px 7px;letter-spacing:1px;background:rgba(60,230,168,.06)}
+  .eyebrow .num{color:var(--mint);border:1px solid rgba(14,154,112,.35);border-radius:6px;
+    padding:1px 7px;letter-spacing:1px;background:rgba(14,154,112,.06)}
   h2{font-size:clamp(28px,3.6vw,42px);line-height:1.2;letter-spacing:-.8px;margin:14px 0 14px}
   .lead{color:var(--muted);font-size:15.5px;margin:0;max-width:800px}
   .muted{color:var(--muted)}
@@ -92,34 +92,34 @@
 
   /* hero */
   .hero{position:relative;min-height:100vh;display:flex;align-items:center;padding:128px 24px 72px;overflow:hidden}
-  #fabricCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.62}
+  #fabricCanvas{position:absolute;inset:0;width:100%;height:100%;opacity:.78}
   .hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:220px;pointer-events:none;
     background:linear-gradient(180deg,transparent,var(--bg))}
   .hero-inner{position:relative;z-index:2;max-width:1200px;margin:0 auto;width:100%}
-  .hero .eyebrow{color:#9fc0b4}
+  .hero .eyebrow{color:#2f6b58}
   .hero h1{font-size:clamp(40px,6.4vw,76px);line-height:1.08;letter-spacing:-2.4px;margin:20px 0 22px;max-width:880px}
   .grad{background:linear-gradient(100deg,var(--mint),var(--cyan) 52%,var(--violet));
     -webkit-background-clip:text;background-clip:text;color:transparent}
-  .hero p.lead{font-size:17px;line-height:1.85;max-width:720px;color:#a9bcd4}
+  .hero p.lead{font-size:17px;line-height:1.85;max-width:720px;color:#4a5f77}
   .hero-tags{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 32px}
-  .tag{font-size:12px;color:#a9c6bd;border:1px solid rgba(60,230,168,.22);background:rgba(60,230,168,.05);
+  .tag{font-size:12px;color:#2f6b58;border:1px solid rgba(14,154,112,.22);background:rgba(14,154,112,.05);
     padding:5px 11px;border-radius:999px}
-  .tag.blue{color:#b6dcff;border-color:rgba(76,184,255,.25);background:rgba(76,184,255,.06)}
-  .tag.violet{color:#cfc8ff;border-color:rgba(139,124,255,.25);background:rgba(139,124,255,.06)}
+  .tag.blue{color:#1d5f9e;border-color:rgba(26,115,201,.25);background:rgba(26,115,201,.06)}
+  .tag.violet{color:#5145b8;border-color:rgba(91,79,214,.25);background:rgba(91,79,214,.06)}
   .hero-cta{display:flex;flex-wrap:wrap;gap:12px}
   .btn{display:inline-flex;align-items:center;gap:8px;border-radius:11px;padding:11px 18px;font-size:14px;
-    font-weight:600;cursor:pointer;border:1px solid var(--line2);color:var(--text);background:rgba(255,255,255,.03);
+    font-weight:600;cursor:pointer;border:1px solid var(--line2);color:var(--text);background:rgba(15,35,60,.04);
     transition:transform .2s,border-color .2s,background .2s;font-family:var(--sans)}
-  .btn:hover{transform:translateY(-2px);border-color:rgba(60,230,168,.5);background:rgba(60,230,168,.07);text-decoration:none}
-  .btn.primary{background:linear-gradient(135deg,rgba(60,230,168,.95),rgba(76,184,255,.9));color:#04121a;border:none;
-    box-shadow:0 10px 34px -12px rgba(60,230,168,.65)}
+  .btn:hover{transform:translateY(-2px);border-color:rgba(14,154,112,.5);background:rgba(14,154,112,.07);text-decoration:none}
+  .btn.primary{background:linear-gradient(135deg,#0d8f68,#1a6fbd);color:#ffffff;border:none;
+    box-shadow:0 10px 34px -12px rgba(14,154,112,.65)}
   .btn.small{padding:7px 12px;font-size:12px;border-radius:9px}
   .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
   .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:58px;border:1px solid var(--line);
     border-radius:16px;overflow:hidden;background:var(--line);max-width:900px}
-  .stat{background:rgba(8,14,24,.78);padding:18px 20px}
+  .stat{background:rgba(255,255,255,.78);padding:18px 20px}
   .stat b{display:block;font-size:24px;letter-spacing:-.5px;font-family:var(--mono);
-    background:linear-gradient(90deg,#e9fff7,var(--mint));-webkit-background-clip:text;background-clip:text;color:transparent}
+    background:linear-gradient(90deg,#0b6b4f,var(--mint));-webkit-background-clip:text;background-clip:text;color:transparent}
   .stat small{display:block;color:var(--dim);font-size:11px;margin-top:3px;letter-spacing:.4px}
   .scroll-hint{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:2;
     color:var(--dim);font-size:11px;letter-spacing:2px;font-family:var(--mono);text-align:center}
@@ -131,254 +131,251 @@
   .grid{display:grid;gap:18px}
   .g3{grid-template-columns:repeat(3,1fr)}
   .g2{grid-template-columns:repeat(2,1fr)}
-  .card{position:relative;background:linear-gradient(180deg,rgba(16,26,44,.82),rgba(9,16,28,.88));
+  .card{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.82),rgba(255,255,255,.88));
     border:1px solid var(--line);border-radius:var(--r);padding:22px 22px 20px;overflow:hidden;
     transition:transform .3s,border-color .3s,box-shadow .3s}
   .card::before{content:"";position:absolute;top:0;left:18px;right:18px;height:1px;
-    background:linear-gradient(90deg,transparent,rgba(60,230,168,.55),transparent);opacity:.5}
-  .card:hover{transform:translateY(-4px);border-color:rgba(120,170,220,.3);
-    box-shadow:0 24px 60px -30px rgba(0,0,0,.9)}
+    background:linear-gradient(90deg,transparent,rgba(14,154,112,.55),transparent);opacity:.5}
+  .card:hover{transform:translateY(-4px);border-color:rgba(40,80,130,.3);
+    box-shadow:0 24px 60px -30px rgba(20,45,80,.22)}
   .card .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;margin-bottom:14px;
-    background:rgba(60,230,168,.08);border:1px solid rgba(60,230,168,.22)}
+    background:rgba(14,154,112,.08);border:1px solid rgba(14,154,112,.22)}
   .card .ico svg{width:17px;height:17px;stroke:var(--mint);fill:none;stroke-width:1.6}
   .card h3{margin:0 0 8px;font-size:16.5px;letter-spacing:.1px}
   .card p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.75}
-  .card .kbd{font-family:var(--mono);font-size:11.5px;color:var(--mint);background:rgba(60,230,168,.07);
-    border:1px solid rgba(60,230,168,.18);padding:1px 6px;border-radius:5px}
-  .card.blue .ico{background:rgba(76,184,255,.08);border-color:rgba(76,184,255,.24)}
+  .card .kbd{font-family:var(--mono);font-size:11.5px;color:var(--mint);background:rgba(14,154,112,.07);
+    border:1px solid rgba(14,154,112,.18);padding:1px 6px;border-radius:5px}
+  .card.blue .ico{background:rgba(26,115,201,.08);border-color:rgba(26,115,201,.24)}
   .card.blue .ico svg{stroke:var(--cyan)}
-  .card.blue .kbd{color:var(--cyan);background:rgba(76,184,255,.07);border-color:rgba(76,184,255,.2)}
-  .card.violet .ico{background:rgba(139,124,255,.08);border-color:rgba(139,124,255,.24)}
+  .card.blue .kbd{color:var(--cyan);background:rgba(26,115,201,.07);border-color:rgba(26,115,201,.2)}
+  .card.violet .ico{background:rgba(91,79,214,.08);border-color:rgba(91,79,214,.24)}
   .card.violet .ico svg{stroke:var(--violet)}
-  .card.gold .ico{background:rgba(255,196,92,.08);border-color:rgba(255,196,92,.24)}
+  .card.gold .ico{background:rgba(176,112,8,.08);border-color:rgba(176,112,8,.24)}
   .card.gold .ico svg{stroke:var(--gold)}
 
   /* glossary */
   .glossary{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
-  .gl{font-size:12px;color:var(--muted);border:1px solid var(--line);background:rgba(255,255,255,.02);
+  .gl{font-size:12px;color:var(--muted);border:1px solid var(--line);background:rgba(15,35,60,.03);
     padding:6px 11px;border-radius:9px}
   .gl b{color:var(--text);font-family:var(--mono);font-weight:600;margin-right:5px}
 
-  /* architecture */
-  .arch-wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:26px;align-items:start}
-  .arch-stack{display:flex;flex-direction:column;gap:8px}
-  .layer{position:relative;border:1px solid var(--line);border-radius:16px;padding:17px 19px;cursor:pointer;
-    background:linear-gradient(180deg,rgba(16,26,44,.86),rgba(9,16,28,.9));
-    transition:transform .3s,border-color .3s,box-shadow .3s,background .3s}
-  .layer:hover{transform:translateX(4px);border-color:var(--line2)}
-  .layer.active{border-color:rgba(60,230,168,.55);transform:translateX(7px);
-    box-shadow:0 0 0 1px rgba(60,230,168,.18),0 22px 54px -30px rgba(60,230,168,.45);
-    background:linear-gradient(180deg,rgba(20,36,48,.92),rgba(9,18,28,.92))}
-  .layer-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .layer-idx{font:600 10px var(--mono);letter-spacing:1px;color:var(--mint);
-    border:1px solid rgba(60,230,168,.35);border-radius:5px;padding:1px 6px;background:rgba(60,230,168,.06)}
-  .layer h3{margin:0;font-size:15.5px}
-  .layer-tag{margin-left:auto;font:10px var(--mono);letter-spacing:1.4px;color:var(--dim)}
-  .layer p{margin:7px 0 10px;color:var(--muted);font-size:12.5px;line-height:1.65}
+  /* chips */
   .chips{display:flex;flex-wrap:wrap;gap:6px}
-  .chip{font:11px var(--mono);color:#a9c3dd;background:rgba(76,184,255,.06);border:1px solid rgba(76,184,255,.16);
+  .chip{font:11px var(--mono);color:#4a5f77;background:rgba(26,115,201,.06);border:1px solid rgba(26,115,201,.16);
     padding:2px 7px;border-radius:6px;white-space:nowrap}
-  .arch-conn{height:20px;display:flex;align-items:center;gap:10px;padding-left:22px;color:var(--dim);
-    font:10px var(--mono);letter-spacing:1px}
-  .arch-conn::before{content:"";width:1px;height:20px;background:linear-gradient(transparent,var(--line2),transparent)}
-  .detail{position:sticky;top:96px;background:linear-gradient(180deg,rgba(14,23,39,.9),rgba(8,14,24,.94));
-    border:1px solid var(--line);border-radius:var(--r);padding:24px;min-height:430px}
-  .detail .chip{display:inline-block;margin-bottom:10px}
-  .detail h3{margin:0 0 8px;font-size:21px;letter-spacing:-.3px}
-  .detail p{margin:0 0 16px;color:var(--muted);font-size:13.5px}
-  .detail-stats{font:11.5px var(--mono);color:var(--mint);border:1px dashed rgba(60,230,168,.28);
-    background:rgba(60,230,168,.04);padding:7px 10px;border-radius:8px;margin-bottom:16px}
-  .detail-list{margin:0 0 18px;padding-left:17px;color:#becfe4;font-size:13px}
-  .detail-list li{margin:5px 0}
-  .file-links{display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:14px}
-  .file-links a{font:12px var(--mono);color:var(--cyan)}
-  .file-links a span{color:var(--dim);margin-left:6px;font-family:var(--sans)}
 
   /* gva */
-  .gva-card{background:linear-gradient(180deg,rgba(14,23,39,.86),rgba(8,14,24,.92));border:1px solid var(--line);
+  .gva-card{background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(255,255,255,.92));border:1px solid var(--line);
     border-radius:var(--r);padding:24px}
   .gva-controls{display:grid;grid-template-columns:auto auto 1fr;gap:20px;align-items:center;margin-bottom:22px}
   .ctrl-label{display:block;font-size:11px;color:var(--dim);letter-spacing:1px;margin-bottom:6px;font-family:var(--mono)}
-  select{background:#0a1322;color:var(--text);border:1px solid var(--line2);border-radius:8px;
+  select{background:#ffffff;color:var(--text);border:1px solid var(--line2);border-radius:8px;
     padding:7px 10px;font-family:var(--mono);font-size:12.5px;outline:none}
   .rankbtns{display:flex;gap:6px}
   .rankbtn{width:36px;height:34px;border-radius:8px;border:1px solid var(--line2);background:transparent;
     color:var(--muted);font-family:var(--mono);font-size:12.5px;cursor:pointer;transition:.2s}
   .rankbtn:hover{border-color:var(--cyan);color:var(--text)}
-  .rankbtn.active{background:rgba(76,184,255,.14);border-color:var(--cyan);color:#dff1ff}
+  .rankbtn.active{background:rgba(26,115,201,.14);border-color:var(--cyan);color:#dff1ff}
   input[type=range]{width:100%;accent-color:var(--gold);cursor:pointer}
   .gva-views{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .gva-view{border:1px solid var(--line);border-radius:14px;padding:14px 14px 16px;background:rgba(6,11,20,.55)}
+  .gva-view{border:1px solid var(--line);border-radius:14px;padding:14px 14px 16px;background:rgba(255,255,255,.55)}
   .gva-view-head{display:flex;align-items:center;gap:8px;margin-bottom:18px;font-size:12.5px;color:var(--muted)}
-  .rankbadge{font:11px var(--mono);color:var(--mint);border:1px solid rgba(60,230,168,.3);
-    background:rgba(60,230,168,.07);padding:1px 7px;border-radius:5px}
+  .rankbadge{font:11px var(--mono);color:var(--mint);border:1px solid rgba(14,154,112,.3);
+    background:rgba(14,154,112,.07);padding:1px 7px;border-radius:5px}
   .gva-view-head .hint{margin-left:auto;font-size:10.5px;color:var(--dim)}
   .gva-strip{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;height:66px;
-    border-radius:11px;background:#0a1322;border:1px solid var(--line);margin-bottom:12px}
+    border-radius:11px;background:#ffffff;border:1px solid var(--line);margin-bottom:12px}
   .seg{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
-    font:10.5px var(--mono);color:var(--dim);border-right:1px dashed rgba(120,170,220,.12);transition:.3s;overflow:hidden}
+    font:10.5px var(--mono);color:var(--dim);border-right:1px dashed rgba(40,80,130,.12);transition:.3s;overflow:hidden}
   .seg:last-child{border-right:0}
   .seg b{font-size:10.5px;font-weight:600;letter-spacing:.4px}
   .seg small{font-size:9px;color:var(--dim);margin-top:2px}
-  .seg.local{background:linear-gradient(180deg,rgba(60,230,168,.17),rgba(60,230,168,.04));color:#bfffe4}
-  .seg.local small{color:#7cc9ac}
-  .seg.remote{background:linear-gradient(180deg,rgba(76,184,255,.13),rgba(76,184,255,.03));color:#cfe9ff}
-  .seg.target{box-shadow:inset 0 0 0 1px rgba(255,196,92,.6)}
+  .seg.local{background:linear-gradient(180deg,rgba(14,154,112,.17),rgba(14,154,112,.04));color:#0b6b4f}
+  .seg.local small{color:#17795a}
+  .seg.remote{background:linear-gradient(180deg,rgba(26,115,201,.13),rgba(26,115,201,.03));color:#164a7d}
+  .seg.target{box-shadow:inset 0 0 0 1px rgba(176,112,8,.6)}
   .gva-marker{position:absolute;top:-12px;bottom:-12px;width:2px;background:var(--gold);z-index:3;
-    box-shadow:0 0 15px rgba(255,196,92,.9);transition:left .45s cubic-bezier(.2,.8,.2,1)}
+    box-shadow:0 0 15px rgba(176,112,8,.9);transition:left .45s cubic-bezier(.2,.8,.2,1)}
   .gva-marker::before{content:"GVA";position:absolute;top:-19px;left:50%;transform:translateX(-50%);
     font:9px var(--mono);color:var(--gold);letter-spacing:1px}
-  .gva-formula{font:11.5px var(--mono);color:#a8c0d9;background:rgba(255,255,255,.025);
+  .gva-formula{font:11.5px var(--mono);color:#4a5f77;background:rgba(15,35,60,.035);
     border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-x:auto;white-space:nowrap}
   .gva-formula em{font-style:normal;color:var(--gold)}
   .res-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:18px}
-  .res{background:rgba(255,255,255,.022);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .res{background:rgba(15,35,60,.03);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
   .res small{display:block;color:var(--dim);font-size:10.5px;letter-spacing:.5px;margin-bottom:3px}
   .res b{font:13px var(--mono);color:var(--text);font-weight:600;word-break:break-all}
   .res.wide{grid-column:span 2}
   .res b.mint{color:var(--mint)}
   .res b.gold{color:var(--gold)}
   .note{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--muted);
-    border-left:2px solid rgba(255,196,92,.55);background:rgba(255,196,92,.04);padding:10px 13px;border-radius:0 8px 8px 0;margin-top:16px}
+    border-left:2px solid rgba(176,112,8,.55);background:rgba(176,112,8,.04);padding:10px 13px;border-radius:0 8px 8px 0;margin-top:16px}
   .note b{color:var(--gold);font-weight:600}
 
   .const-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:16px}
   .const-table th,.const-table td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
   .const-table th{color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:1px;font-family:var(--mono)}
-  .const-table td:first-child{font-family:var(--mono);color:#cfe0f5;white-space:nowrap}
+  .const-table td:first-child{font-family:var(--mono);color:#22374f;white-space:nowrap}
   .const-table td:nth-child(2){font-family:var(--mono);color:var(--mint);white-space:nowrap}
   .const-table td{color:var(--muted)}
 
   /* data plane */
   .dp-wrap{display:grid;grid-template-columns:1.45fr .85fr;gap:22px;align-items:start}
   .dp-stage{border:1px solid var(--line);border-radius:var(--r);background:
-    radial-gradient(700px 300px at 50% 0%,rgba(76,184,255,.06),transparent 70%),rgba(8,14,24,.82);padding:14px}
+    radial-gradient(700px 300px at 50% 0%,rgba(26,115,201,.06),transparent 70%),rgba(255,255,255,.82);padding:14px}
   .dp-svg{width:100%;height:auto;display:block}
-  .dp-svg .box{fill:rgba(13,22,38,.92);stroke:rgba(120,170,220,.2);stroke-width:1}
-  .dp-svg .hbm{fill:rgba(60,230,168,.09);stroke:rgba(60,230,168,.42);stroke-width:1.1}
-  .dp-svg .dram{fill:rgba(76,184,255,.09);stroke:rgba(76,184,255,.38);stroke-width:1.1}
-  .dp-svg .netbox{fill:rgba(139,124,255,.08);stroke:rgba(139,124,255,.4);stroke-width:1;stroke-dasharray:5 6}
-  .dp-svg .nic{fill:rgba(120,170,220,.05);stroke:rgba(120,170,220,.22);stroke-width:1}
-  .dp-svg .title{fill:#e3eefc;font-size:13px;font-weight:600;font-family:var(--sans)}
-  .dp-svg .label{fill:#cfe0f5;font-size:12px;font-family:var(--sans)}
-  .dp-svg .muted-t{fill:#7d93b3;font-size:10.5px;font-family:var(--mono)}
-  .dp-svg .flowline{fill:none;stroke:rgba(255,196,92,.42);stroke-width:2;stroke-dasharray:7 9;
+  .dp-svg .box{fill:rgba(255,255,255,.92);stroke:rgba(40,80,130,.2);stroke-width:1}
+  .dp-svg .hbm{fill:rgba(14,154,112,.09);stroke:rgba(14,154,112,.42);stroke-width:1.1}
+  .dp-svg .dram{fill:rgba(26,115,201,.09);stroke:rgba(26,115,201,.38);stroke-width:1.1}
+  .dp-svg .netbox{fill:rgba(91,79,214,.08);stroke:rgba(91,79,214,.4);stroke-width:1;stroke-dasharray:5 6}
+  .dp-svg .nic{fill:rgba(40,80,130,.05);stroke:rgba(40,80,130,.22);stroke-width:1}
+  .dp-svg .title{fill:#10203a;font-size:13px;font-weight:600;font-family:var(--sans)}
+  .dp-svg .label{fill:#22374f;font-size:12px;font-family:var(--sans)}
+  .dp-svg .muted-t{fill:#5b7089;font-size:10.5px;font-family:var(--mono)}
+  .dp-svg .flowline{fill:none;stroke:rgba(176,112,8,.42);stroke-width:2;stroke-dasharray:7 9;
     animation:dash 1.15s linear infinite}
   @keyframes dash{to{stroke-dashoffset:-32}}
-  .dp-svg .active{filter:drop-shadow(0 0 10px rgba(60,230,168,.6))}
+  .dp-svg .active{filter:drop-shadow(0 0 10px rgba(14,154,112,.6))}
   .dp-side{display:flex;flex-direction:column;gap:14px}
   .dp-btns{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-  .dp-btn{text-align:left;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,.02);
+  .dp-btn{text-align:left;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:rgba(15,35,60,.03);
     color:var(--muted);font-size:12px;cursor:pointer;transition:.2s;font-family:var(--sans)}
   .dp-btn:hover{border-color:var(--line2);color:var(--text)}
-  .dp-btn.active{border-color:rgba(255,196,92,.55);background:rgba(255,196,92,.07);color:#ffe6b8}
-  .dp-info{border:1px solid var(--line);border-radius:14px;background:rgba(10,17,30,.7);padding:16px}
+  .dp-btn.active{border-color:rgba(176,112,8,.55);background:rgba(176,112,8,.07);color:#7a5200}
+  .dp-info{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.7);padding:16px}
   .dp-info h3{margin:0 0 4px;font-size:15px}
   .dp-info .route{font:11px var(--mono);color:var(--gold);margin-bottom:10px;word-break:break-all}
   .dp-info p{margin:0 0 12px;color:var(--muted);font-size:12.5px}
   .dp-metrics{display:flex;gap:8px;flex-wrap:wrap}
-  .metric{font:11px var(--mono);border:1px solid var(--line);border-radius:7px;padding:4px 8px;color:#b9cbe2}
+  .metric{font:11px var(--mono);border:1px solid var(--line);border-radius:7px;padding:4px 8px;color:#3c5069}
   .metric b{color:var(--mint);font-weight:600}
   .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--dim);margin-top:12px}
   .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 
   /* sequence */
   .seq-wrap{border:1px solid var(--line);border-radius:var(--r);background:
-    radial-gradient(800px 300px at 50% 0,rgba(139,124,255,.06),transparent 70%),rgba(8,14,24,.8);overflow:hidden}
+    radial-gradient(800px 300px at 50% 0,rgba(91,79,214,.06),transparent 70%),rgba(255,255,255,.8);overflow:hidden}
   .seq-bar{display:flex;align-items:center;gap:9px;padding:13px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
   .seq-bar .step{font:11.5px var(--mono);color:var(--mint);margin-right:auto;letter-spacing:.5px}
   .seq-scroll{overflow-x:auto;padding:8px 10px 4px}
   .seq-svg{width:100%;min-width:960px;height:auto;display:block}
-  .seq-svg .phase-band{fill:rgba(76,184,255,.035);stroke:rgba(120,170,220,.08);stroke-width:1}
-  .seq-svg .phase-band.alt{fill:rgba(139,124,255,.04)}
-  .seq-svg .phase-txt{fill:#5d7290;font-size:10px;font-family:var(--mono);letter-spacing:1px}
-  .seq-svg .lifeline{stroke:rgba(120,170,220,.18);stroke-width:1;stroke-dasharray:4 6}
-  .seq-svg .actor rect{fill:rgba(14,23,39,.95);stroke:rgba(120,170,220,.28);stroke-width:1}
-  .seq-svg .actor text{fill:#cfe0f5;font-size:11.5px;font-family:var(--sans)}
-  .seq-svg .actor.speaking rect{stroke:var(--mint);stroke-width:1.4;filter:drop-shadow(0 0 8px rgba(60,230,168,.35))}
-  .seq-svg .msg-line{fill:none;stroke:#4cb8ff;stroke-width:1.35}
-  .seq-svg .seq-msg.ret .msg-line{stroke:#7fa6cf;stroke-dasharray:5 5}
-  .seq-svg .seq-msg.async .msg-line{stroke:#8b7cff;stroke-dasharray:3 4}
-  .seq-svg .seq-msg.self .msg-line{stroke:#3ce6a8}
-  .seq-svg .msg-txt{fill:#a9bdd6;font-size:10.6px;font-family:var(--sans);paint-order:stroke;
-    stroke:#060a12;stroke-width:4px;stroke-linejoin:round}
+  .seq-svg .phase-band{fill:rgba(26,115,201,.035);stroke:rgba(40,80,130,.08);stroke-width:1}
+  .seq-svg .phase-band.alt{fill:rgba(91,79,214,.04)}
+  .seq-svg .phase-txt{fill:#46617d;font-size:10.5px;font-family:var(--mono);letter-spacing:1px}
+  .seq-svg .lifeline{stroke:rgba(40,80,130,.18);stroke-width:1;stroke-dasharray:4 6}
+  .seq-svg .actor rect{fill:rgba(255,255,255,.95);stroke:rgba(40,80,130,.28);stroke-width:1}
+  .seq-svg .actor text{fill:#22374f;font-size:11.5px;font-family:var(--sans)}
+  .seq-svg .actor.speaking rect{stroke:var(--mint);stroke-width:1.4;filter:drop-shadow(0 0 8px rgba(14,154,112,.35))}
+  .seq-svg .msg-line{fill:none;stroke:#1a73c9;stroke-width:1.35}
+  .seq-svg .seq-msg.ret .msg-line{stroke:#2f6f9e;stroke-dasharray:5 5}
+  .seq-svg .seq-msg.async .msg-line{stroke:#5b4fd6;stroke-dasharray:3 4}
+  .seq-svg .seq-msg.self .msg-line{stroke:#0b7d59}
+  .seq-svg .msg-txt{fill:#41566e;font-size:10.6px;font-family:var(--sans);paint-order:stroke;
+    stroke:#f6f9fd;stroke-width:4px;stroke-linejoin:round}
   .seq-svg .seq-msg{opacity:0;transition:opacity .38s ease}
   .seq-svg .seq-msg.on{opacity:1}
-  .seq-svg .seq-msg.active .msg-txt{fill:#fff}
+  .seq-svg .seq-msg.active .msg-txt{fill:#0a2340}
   .seq-svg .seq-msg.active .msg-line{stroke:var(--mint);stroke-width:2;
-    filter:drop-shadow(0 0 5px rgba(60,230,168,.65))}
+    filter:drop-shadow(0 0 5px rgba(14,154,112,.65))}
 
   /* mesh schematic */
   .mesh-figure{margin:0 0 20px;border:1px solid var(--line);border-radius:var(--r);padding:10px 14px 4px;
-    background:radial-gradient(700px 260px at 50% 0,rgba(76,184,255,.05),transparent 70%),rgba(8,14,24,.7);
+    background:radial-gradient(700px 260px at 50% 0,rgba(26,115,201,.05),transparent 70%),rgba(255,255,255,.7);
     overflow-x:auto}
   .mesh-figure svg{width:100%;min-width:900px;height:auto;display:block}
-  .mesh-figure .m-box{fill:rgba(14,23,39,.92);stroke:rgba(120,170,220,.28);stroke-width:1}
-  .mesh-figure .m-box.int{stroke:rgba(60,230,168,.32)}
-  .mesh-figure .m-title{fill:#e3eefc;font:600 13px var(--sans);text-anchor:middle}
-  .mesh-figure .m-sub{fill:#8fa3bf;font:10px var(--mono);text-anchor:middle}
-  .mesh-figure .m-phase{fill:#5d7290;font:10px var(--mono);letter-spacing:1.2px;text-anchor:middle}
-  .mesh-figure .m-link{stroke:#4cb8ff;stroke-width:1.3;fill:none}
+  .mesh-figure .m-box{fill:rgba(255,255,255,.92);stroke:rgba(40,80,130,.28);stroke-width:1}
+  .mesh-figure .m-box.int{stroke:rgba(14,154,112,.32)}
+  .mesh-figure .m-title{fill:#10203a;font:600 13px var(--sans);text-anchor:middle}
+  .mesh-figure .m-sub{fill:#51677f;font:10px var(--mono);text-anchor:middle}
+  .mesh-figure .m-phase{fill:#5c7188;font:10px var(--mono);letter-spacing:1.2px;text-anchor:middle}
+  .mesh-figure .m-link{stroke:#1a73c9;stroke-width:1.3;fill:none}
   .mesh-figure .m-link.flow{stroke-dasharray:5 6;animation:meshDash 1.6s linear infinite}
-  .mesh-figure .m-data{stroke:#3ce6a8;stroke-width:1.2;fill:none;stroke-dasharray:4 5}
-  .mesh-figure .m-msg{fill:#a9bdd6;font:10px var(--sans);paint-order:stroke;stroke:#060a12;stroke-width:4px;
+  .mesh-figure .m-data{stroke:#0b7d59;stroke-width:1.2;fill:none;stroke-dasharray:4 5}
+  .mesh-figure .m-msg{fill:#41566e;font:10px var(--sans);paint-order:stroke;stroke:#f6f9fd;stroke-width:4px;
     stroke-linejoin:round}
-  .mesh-figure .m-rank-t{fill:#e3eefc;font:600 12px var(--mono);text-anchor:middle}
-  .mesh-figure .m-rank-s{fill:#8fa3bf;font:10px var(--mono);text-anchor:middle}
+  .mesh-figure .m-rank-t{fill:#10203a;font:600 12px var(--mono);text-anchor:middle}
+  .mesh-figure .m-rank-s{fill:#51677f;font:10px var(--mono);text-anchor:middle}
   .mesh-figure .m-state{fill:var(--mint);font:9.5px var(--mono);letter-spacing:.6px}
-  .mesh-figure .m-cap{fill:#5d7290;font:10.5px var(--sans);text-anchor:middle}
-  .mesh-figure .m-dot{fill:#3ce6a8}
+  .mesh-figure .m-cap{fill:#5c7188;font:10.5px var(--sans);text-anchor:middle}
+  .mesh-figure .m-dot{fill:#0b7d59}
   @keyframes meshDash{to{stroke-dashoffset:-22}}
 
   .cmp{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:12.8px;line-height:1.75}
   .cmp li{margin-bottom:6px}
   .cmp li:last-child{margin-bottom:0}
   .cmp-anim{margin-top:18px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
-    background:radial-gradient(700px 240px at 50% 0,rgba(60,230,168,.05),transparent 70%),rgba(8,14,24,.7)}
+    background:radial-gradient(700px 240px at 50% 0,rgba(14,154,112,.05),transparent 70%),rgba(255,255,255,.7)}
   .cmp-bar{display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--line);
     flex-wrap:wrap}
   .cmp-stat{font:11.5px var(--mono);color:var(--muted);letter-spacing:.2px}
   .cmp-anim svg{width:100%;height:auto;display:block}
-  .cmp-anim .lane-t{fill:#e3eefc;font:600 13px var(--sans)}
-  .cmp-anim .lane-s{fill:#5d7290;font:10px var(--mono)}
-  .cmp-anim .grid{stroke:rgba(120,170,220,.10);stroke-width:1}
-  .cmp-anim .grid.base{stroke:rgba(120,170,220,.28)}
-  .cmp-anim .axis{fill:#5d7290;font:9.5px var(--mono);text-anchor:middle}
-  .cmp-anim .bar-t{fill:#cfe3f8;font:9.5px var(--mono);text-anchor:middle}
-  .cmp-anim .rl{fill:#93a8c4;font:10px var(--mono);text-anchor:end}
-  .cmp-anim .bar{fill:rgba(76,184,255,.14);stroke:rgba(76,184,255,.32);stroke-width:1;
+  .cmp-anim .lane-t{fill:#10203a;font:600 13px var(--sans)}
+  .cmp-anim .lane-s{fill:#46617d;font:10.5px var(--mono)}
+  .cmp-anim .grid{stroke:rgba(40,80,130,.10);stroke-width:1}
+  .cmp-anim .grid.base{stroke:rgba(40,80,130,.28)}
+  .cmp-anim .axis{fill:#4a6480;font:10px var(--mono);text-anchor:middle}
+  .cmp-anim .bar-t{fill:#1d3350;font:9.5px var(--mono);text-anchor:middle}
+  .cmp-anim .rl{fill:#46617d;font:10.5px var(--mono);text-anchor:end}
+  .cmp-anim .bar{fill:rgba(26,115,201,.14);stroke:rgba(26,115,201,.32);stroke-width:1;
     transition:fill .18s,stroke .18s}
-  .cmp-anim .bar.on{fill:rgba(76,184,255,.55);stroke:rgba(76,184,255,.95)}
-  .cmp-anim .bar.ok{fill:rgba(76,184,255,.22);stroke:rgba(76,184,255,.55)}
-  .cmp-anim .bar.b{fill:rgba(60,230,168,.14);stroke:rgba(60,230,168,.32)}
-  .cmp-anim .bar.b.on{fill:rgba(60,230,168,.50);stroke:rgba(60,230,168,.95)}
-  .cmp-anim .bar.b.ok{fill:rgba(60,230,168,.20);stroke:rgba(60,230,168,.50)}
-  .cmp-anim .lane-tag{fill:#5d7290;font:9.5px var(--mono);letter-spacing:1px}
+  .cmp-anim .bar.on{fill:rgba(26,115,201,.55);stroke:rgba(26,115,201,.95)}
+  .cmp-anim .bar.ok{fill:rgba(26,115,201,.22);stroke:rgba(26,115,201,.55)}
+  .cmp-anim .bar.b{fill:rgba(14,154,112,.14);stroke:rgba(14,154,112,.32)}
+  .cmp-anim .bar.b.on{fill:rgba(14,154,112,.50);stroke:rgba(14,154,112,.95)}
+  .cmp-anim .bar.b.ok{fill:rgba(14,154,112,.20);stroke:rgba(14,154,112,.50)}
+  .cmp-anim .lane-tag{fill:#46617d;font:10px var(--mono);letter-spacing:1px}
+
+  /* offload call chain */
+  .chain{margin-top:6px;border:1px solid var(--line);border-radius:var(--r);padding:4px 18px;
+    background:radial-gradient(700px 240px at 50% 0,rgba(26,115,201,.05),transparent 70%),rgba(255,255,255,.72)}
+  .chain-step{display:grid;grid-template-columns:36px 1fr auto;gap:14px;align-items:start;
+    padding:13px 0;border-bottom:1px dashed var(--line)}
+  .chain-step:last-child{border-bottom:0}
+  .chain-step .ci{font:600 11px var(--mono);color:var(--mint);text-align:center;padding:3px 0;
+    border:1px solid rgba(14,154,112,.35);border-radius:6px;background:rgba(14,154,112,.07)}
+  .chain-step h4{margin:0 0 4px;font-size:13.5px}
+  .chain-step p{margin:0;color:var(--muted);font-size:12.3px;line-height:1.68}
+  .chain-step code{font:11px var(--mono);color:#2c5f8f;word-break:break-word}
+  .chain-step .cf{font:10.5px var(--mono);color:var(--dim);white-space:nowrap;padding-top:3px}
+  .launch-fig{margin:18px 0 0;border:1px solid var(--line);border-radius:var(--r);padding:10px 14px 4px;
+    background:radial-gradient(700px 260px at 50% 0,rgba(26,115,201,.05),transparent 70%),rgba(255,255,255,.72);
+    overflow-x:auto}
+  .launch-fig svg{width:100%;min-width:900px;height:auto;display:block}
+  .lf-h{fill:#10203a;font:600 10.5px var(--mono);letter-spacing:1px}
+  .lf-t{fill:#22374f;font:600 10.5px var(--sans)}
+  .lf-s{fill:#5c7188;font:9.5px var(--mono)}
+  .lf-box{fill:rgba(255,255,255,.94);stroke:rgba(40,80,130,.24);stroke-width:1}
+  .lf-hot{fill:rgba(14,154,112,.09);stroke:rgba(14,154,112,.5);stroke-width:1}
+  .lf-core{fill:rgba(26,115,201,.10);stroke:rgba(26,115,201,.28);stroke-width:1}
+  .lf-core.on{fill:rgba(14,154,112,.42);stroke:rgba(14,154,112,.85)}
+  .lf-line{stroke:rgba(40,80,130,.42);stroke-width:1.2;fill:none}
+  .lf-note{fill:#46617d;font:9.5px var(--mono)}
+  .lf-key{fill:#0b7d59;font:600 9.5px var(--mono)}
   .seq-lead{color:var(--muted);font-size:12.8px;line-height:1.75;margin:0 0 12px;max-width:920px}
   .dp-seq{margin-top:0;margin-bottom:4px}
   .dp-seq .seq-svg{min-width:1000px}
 
   /* global code structure */
   .gc-figure{margin:0 0 24px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
-    background:radial-gradient(760px 300px at 50% 0,rgba(76,184,255,.05),transparent 70%),rgba(8,14,24,.72)}
+    background:radial-gradient(760px 300px at 50% 0,rgba(26,115,201,.05),transparent 70%),rgba(255,255,255,.72)}
   .gc-bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);
     flex-wrap:wrap}
   .gc-title{font:600 12px var(--mono);letter-spacing:1.2px;color:var(--mint)}
   .gc-cap{font-size:11.8px;color:var(--muted);margin-left:auto;text-align:right}
   .gc-scroll{overflow-x:auto;padding:6px 10px 8px}
   .gc-svg{width:100%;min-width:920px;height:auto;display:block}
-  .gc-svg .layer{fill:rgba(120,170,220,.025);stroke:rgba(120,170,220,.10);stroke-width:1;transition:.2s}
-  .gc-svg .layer.hot{fill:rgba(76,184,255,.055);stroke:rgba(76,184,255,.30)}
+  .gc-svg .layer{fill:rgba(40,80,130,.025);stroke:rgba(40,80,130,.10);stroke-width:1;transition:.2s}
+  .gc-svg .layer.hot{fill:rgba(26,115,201,.055);stroke:rgba(26,115,201,.30)}
   .gc-svg .lx{fill:var(--mint);font:600 11px var(--mono);letter-spacing:1px}
-  .gc-svg .ln{fill:#7d93b3;font:9.5px var(--sans)}
-  .gc-svg .box{fill:rgba(13,22,38,.95);stroke:rgba(120,170,220,.26);stroke-width:1;transition:.18s}
+  .gc-svg .ln{fill:#5b7089;font:9.5px var(--sans)}
+  .gc-svg .box{fill:rgba(255,255,255,.95);stroke:rgba(40,80,130,.26);stroke-width:1;transition:.18s}
   .gc-svg .gc-box{cursor:pointer}
-  .gc-svg .gc-box.hot .box{fill:rgba(60,230,168,.10);stroke:rgba(60,230,168,.85);stroke-width:1.4;
-    filter:drop-shadow(0 0 8px rgba(60,230,168,.30))}
-  .gc-svg .bt{fill:#dce9f8;font:12px var(--sans)}
-  .gc-svg .bs{fill:#7d93b3;font:9.5px var(--mono)}
-  .gc-svg .gap-lbl{fill:#5d7290;font:9px var(--mono)}
-  .gc-svg .flow{stroke:rgba(76,184,255,.42);stroke-width:1.2;fill:none}
+  .gc-svg .gc-box.hot .box{fill:rgba(14,154,112,.10);stroke:rgba(14,154,112,.85);stroke-width:1.4;
+    filter:drop-shadow(0 0 8px rgba(14,154,112,.30))}
+  .gc-svg .bt{fill:#14263c;font:12px var(--sans)}
+  .gc-svg .bs{fill:#5b7089;font:9.5px var(--mono)}
+  .gc-svg .gap-lbl{fill:#5c7188;font:9px var(--mono)}
+  .gc-svg .flow{stroke:rgba(26,115,201,.42);stroke-width:1.2;fill:none}
   .gc-svg .flow.dash{stroke-dasharray:4 4}
   .sub-head{margin:30px 0 4px;font-size:16px;display:flex;align-items:center;gap:10px}
   .sub-head::before{content:"";width:3px;height:15px;border-radius:2px;
@@ -386,44 +383,44 @@
 
   /* state machine */
   .sm-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .sm-panel{border:1px solid var(--line);border-radius:var(--r);background:rgba(10,17,30,.72);padding:20px}
+  .sm-panel{border:1px solid var(--line);border-radius:var(--r);background:rgba(255,255,255,.72);padding:20px}
   .sm-panel h3{margin:0 0 4px;font-size:15px}
   .sm-panel .sub{font-size:11.5px;color:var(--dim);margin-bottom:18px}
   .sm-row{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
   .state{font:11px var(--mono);padding:9px 11px;border-radius:9px;border:1px solid var(--line);
-    color:var(--dim);background:rgba(255,255,255,.02);transition:.3s;white-space:nowrap}
-  .state.done{border-color:rgba(60,230,168,.3);color:#9ad9bf}
-  .state.on{border-color:var(--mint);color:#e2fff4;background:rgba(60,230,168,.13);
-    box-shadow:0 0 24px rgba(60,230,168,.26);transform:translateY(-2px)}
-  .sm-arrow{color:rgba(120,170,220,.35);font-size:16px}
+    color:var(--dim);background:rgba(15,35,60,.03);transition:.3s;white-space:nowrap}
+  .state.done{border-color:rgba(14,154,112,.3);color:#17795a}
+  .state.on{border-color:var(--mint);color:#0b6b4f;background:rgba(14,154,112,.13);
+    box-shadow:0 0 24px rgba(14,154,112,.26);transform:translateY(-2px)}
+  .sm-arrow{color:rgba(40,80,130,.35);font-size:16px}
   .sm-note{margin-top:16px;font-size:11.5px;color:var(--dim);border-top:1px dashed var(--line);padding-top:12px}
-  .sm-log{margin-top:18px;border:1px solid var(--line);border-radius:12px;background:#070d18;padding:12px 14px;
-    min-height:104px;font:11.5px var(--mono);color:#93b3cf;white-space:pre-wrap}
+  .sm-log{margin-top:18px;border:1px solid var(--line);border-radius:12px;background:#f3f7fc;padding:12px 14px;
+    min-height:104px;font:11.5px var(--mono);color:#506a86;white-space:pre-wrap}
   .sm-log .ok{color:var(--mint)}
   .sm-log .warn{color:var(--gold)}
 
   /* flow */
   .flow{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:8px}
-  .flow-step{position:relative;border:1px solid var(--line);border-radius:13px;background:rgba(10,17,30,.72);
+  .flow-step{position:relative;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.72);
     padding:14px 13px;transition:.3s;min-height:150px}
   .flow-step .fi{font:10px var(--mono);color:var(--dim);letter-spacing:1px}
   .flow-step h4{margin:6px 0 5px;font-size:13px}
   .flow-step p{margin:0;font-size:11.5px;color:var(--muted);line-height:1.6}
-  .flow-step code{font-size:10.5px;color:#9ec6e8;word-break:break-all}
+  .flow-step code{font-size:10.5px;color:#2c5f8f;word-break:break-all}
   .flow-step::after{content:"›";position:absolute;right:-11px;top:50%;transform:translateY(-50%);
-    color:rgba(120,170,220,.35);font-size:20px;z-index:2}
+    color:rgba(40,80,130,.35);font-size:20px;z-index:2}
   .flow-step:last-child::after{display:none}
-  .flow-step.hot{border-color:rgba(60,230,168,.55);background:rgba(60,230,168,.07);
-    box-shadow:0 0 0 1px rgba(60,230,168,.12),0 16px 40px -28px rgba(60,230,168,.6);transform:translateY(-3px)}
+  .flow-step.hot{border-color:rgba(14,154,112,.55);background:rgba(14,154,112,.07);
+    box-shadow:0 0 0 1px rgba(14,154,112,.12),0 16px 40px -28px rgba(14,154,112,.6);transform:translateY(-3px)}
   .flow-step.hot .fi{color:var(--mint)}
   .flow-note{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:12px 15px;
-    font-size:12.5px;color:var(--muted);background:rgba(255,255,255,.02)}
+    font-size:12.5px;color:var(--muted);background:rgba(15,35,60,.03)}
   .flow-note b{color:var(--mint)}
   .matrix{width:100%;border-collapse:collapse;font-size:12px;margin-top:18px}
   .matrix th,.matrix td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
   .matrix th{font:500 10.5px var(--mono);color:var(--dim);letter-spacing:.8px}
   .matrix td{color:var(--muted)}
-  .matrix td:first-child{font-family:var(--mono);color:#cfe0f5;white-space:nowrap}
+  .matrix td:first-child{font-family:var(--mono);color:#22374f;white-space:nowrap}
   .matrix td:last-child{font-family:var(--mono);color:var(--cyan);white-space:nowrap}
 
   /* offload */
@@ -431,51 +428,51 @@
   .off-side h3{margin:0;font-size:16px}
   .off-side p{margin:0;color:var(--muted);font-size:13px}
   .off-scenes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .scene{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:rgba(255,255,255,.02)}
+  .scene{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:rgba(15,35,60,.03)}
   .scene b{display:block;font:11px var(--mono);color:var(--mint);margin-bottom:3px}
   .scene span{font-size:11.5px;color:var(--muted)}
-  pre.code{background:#070d18;border:1px solid var(--line);border-radius:11px;padding:13px 14px;
-    overflow:auto;font-size:11.5px;line-height:1.65;color:#9ec6e8;margin:0}
-  pre.code .c{color:#5d7290}
+  pre.code{background:#f3f7fc;border:1px solid var(--line);border-radius:11px;padding:13px 14px;
+    overflow:auto;font-size:11.5px;line-height:1.65;color:#2c5f8f;margin:0}
+  pre.code .c{color:#5c7188}
   pre.code .k{color:var(--mint)}
 
   /* code map */
   .code-grid{display:grid;grid-template-columns:.82fr 1.18fr;gap:24px;align-items:start}
-  .tree-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(8,14,24,.72);padding:14px 12px;
+  .tree-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(255,255,255,.72);padding:14px 12px;
     max-height:640px;overflow:auto}
   .tree,.tree ul{list-style:none;margin:0;padding:0}
-  .tree ul{margin-left:13px;border-left:1px dashed rgba(120,170,220,.16);padding-left:7px}
+  .tree ul{margin-left:13px;border-left:1px dashed rgba(40,80,130,.16);padding-left:7px}
   .tree button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;
     background:none;border:0;color:var(--muted);padding:7px 9px;border-radius:8px;cursor:pointer;
     font:12px var(--mono);text-align:left;transition:.2s}
-  .tree button:hover{background:rgba(76,184,255,.07);color:#e2eefc}
-  .tree button.active{background:rgba(60,230,168,.09);color:#d9fff0;box-shadow:inset 0 0 0 1px rgba(60,230,168,.18)}
+  .tree button:hover{background:rgba(26,115,201,.07);color:#10203a}
+  .tree button.active{background:rgba(14,154,112,.09);color:#0b6b4f;box-shadow:inset 0 0 0 1px rgba(14,154,112,.18)}
   .tree .meta{font-size:10px;color:var(--dim);white-space:nowrap}
-  .tree .root{font-weight:600;color:#cfe0f5}
-  .code-detail{border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,rgba(14,23,39,.88),rgba(8,14,24,.9));
+  .tree .root{font-weight:600;color:#22374f}
+  .code-detail{border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,rgba(255,255,255,.88),rgba(255,255,255,.9));
     padding:24px;min-height:520px}
   .code-detail h3{margin:0 0 7px;font-size:20px;letter-spacing:-.2px}
   .code-detail .stats{display:block;max-width:none;margin:0 0 14px;background:none;border:0;
     border-bottom:1px dashed var(--line);border-radius:0;overflow:visible;font:11.5px var(--mono);
     color:var(--mint);padding-bottom:12px;letter-spacing:.3px}
   .code-detail p{color:var(--muted);font-size:13px;margin:0 0 14px}
-  .code-detail ul{margin:0 0 16px;padding-left:17px;color:#becfe4;font-size:12.8px}
+  .code-detail ul{margin:0 0 16px;padding-left:17px;color:#33475f;font-size:12.8px}
   .code-detail li{margin:5px 0}
   .code-detail .files{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
   .code-detail .files a{font:11.5px var(--mono);color:var(--cyan);padding:5px 8px;border:1px solid var(--line);
-    border-radius:7px;background:rgba(255,255,255,.02);overflow:hidden;text-overflow:ellipsis}
-  .code-detail .files a:hover{background:rgba(76,184,255,.07);text-decoration:none}
+    border-radius:7px;background:rgba(15,35,60,.03);overflow:hidden;text-overflow:ellipsis}
+  .code-detail .files a:hover{background:rgba(26,115,201,.07);text-decoration:none}
   .kpis{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  .kpi{font:10.5px var(--mono);color:#b9cbe2;border:1px solid var(--line);border-radius:7px;padding:4px 8px}
+  .kpi{font:10.5px var(--mono);color:#3c5069;border:1px solid var(--line);border-radius:7px;padding:4px 8px}
 
   /* perf */
-  .perf-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(8,14,24,.75);padding:24px}
+  .perf-box{border:1px solid var(--line);border-radius:var(--r);background:rgba(255,255,255,.75);padding:24px}
   .bar-row{display:grid;grid-template-columns:104px 1fr 100px;gap:14px;align-items:center;margin:15px 0}
-  .bar-row .name{font:11.5px var(--mono);color:#cfe0f5;white-space:nowrap}
-  .bar{height:10px;border-radius:7px;background:rgba(255,255,255,.055);overflow:hidden;position:relative}
+  .bar-row .name{font:11.5px var(--mono);color:#22374f;white-space:nowrap}
+  .bar{height:10px;border-radius:7px;background:rgba(15,35,60,.06);overflow:hidden;position:relative}
   .bar i{display:block;height:100%;width:0;border-radius:7px;
     background:linear-gradient(90deg,var(--mint),var(--cyan));transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
-  .bar.gold i{background:linear-gradient(90deg,var(--gold),#ff9d5c)}
+  .bar.gold i{background:linear-gradient(90deg,var(--gold),#c25f16)}
   .bar.violet i{background:linear-gradient(90deg,var(--violet),var(--cyan))}
   .bar-row .val{font:12px var(--mono);color:var(--mint);text-align:right}
   .axis{display:flex;justify-content:space-between;color:var(--dim);font:10px var(--mono);margin-left:118px;margin-right:114px;
@@ -484,11 +481,11 @@
 
   /* build */
   .build-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  .cmd{position:relative;background:#070d18;border:1px solid var(--line);border-radius:12px;padding:15px 16px;
+  .cmd{position:relative;background:#f3f7fc;border:1px solid var(--line);border-radius:12px;padding:15px 16px;
     overflow:auto}
-  .cmd code{font-size:12px;color:#9ec6e8;white-space:pre}
+  .cmd code{font-size:12px;color:#2c5f8f;white-space:pre}
   .cmd .copy{position:absolute;top:9px;right:9px}
-  .build-card{border:1px solid var(--line);border-radius:var(--r);background:rgba(10,17,30,.7);padding:20px}
+  .build-card{border:1px solid var(--line);border-radius:var(--r);background:rgba(255,255,255,.7);padding:20px}
   .build-card h3{margin:0 0 8px;font-size:15px}
   .build-card p{margin:0 0 13px;color:var(--muted);font-size:12.5px}
   .build-card .chips{gap:6px}
@@ -501,8 +498,9 @@
   .foot a:hover{color:var(--cyan)}
 
   @media(max-width:1020px){
-    .arch-wrap,.dp-wrap,.code-grid{grid-template-columns:1fr}
-    .detail{position:relative;top:0}
+    .dp-wrap,.code-grid{grid-template-columns:1fr}
+    .chain-step{grid-template-columns:32px 1fr}
+    .chain-step .cf{display:none}
     .g3{grid-template-columns:repeat(2,1fr)}
     .flow{grid-template-columns:repeat(3,1fr)}
     .flow-step::after{display:none}
@@ -548,14 +546,13 @@
   </div>
   <nav class="nav-links">
     <a href="#overview" class="active">概览</a>
-    <a href="#architecture">分层结构</a>
+    <a href="#code">代码结构</a>
     <a href="#gva">统一编址</a>
     <a href="#dataplane">数据面</a>
     <a href="#control">组网与时序</a>
     <a href="#statemachine">状态机</a>
     <a href="#dispatch">拷贝调度</a>
     <a href="#offload">Offload</a>
-    <a href="#code">代码结构</a>
     <a href="#perf">性能</a>
     <a href="#build">构建验证</a>
   </nav>
@@ -651,51 +648,221 @@
     </div>
   </section>
 
-  <!-- ARCHITECTURE -->
-  <section id="architecture">
+  <!-- CODE MAP -->
+  <section id="code">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">02</span> LAYERS</div>
-      <h2>分层结构</h2>
+      <div class="eyebrow"><span class="num">02</span> CODE MAP</div>
+      <h2>代码结构</h2>
       <p class="lead">
-        语义层不实现数据面，数据面不管理成员关系。smem 将 BM / TRANS / SHM / Offload 四类语义翻译为 hybm 的统一模型；
-        hybm 负责地址、内存段、传输与算子；config store 与 acc_links 构成控制面；应用层只使用北向 API。
-        点击任一图层查看职责与源码位置。
+        仓库按语义层、核心层、控制面与应用划分。src/smem 生成 libmf_smem.so，src/hybm 生成 libmf_hybm_core.so，
+        Offload 与 acc_links 各自成库；控制面同时提供进程内 TCP Store 与可选 etcd 后端。上方结构图给出层次与调用方向，
+        下方按模块展开，点击左侧模块查看职责与入口文件。
       </p>
     </div>
 
-    <div class="arch-wrap reveal">
-      <div class="arch-stack" id="archStack">
-        <article class="layer active" data-layer="app">
-          <div class="layer-top"><span class="layer-idx">L4</span><h3>应用与示例层</h3><span class="layer-tag">CONSUMERS</span></div>
-          <p>官方应用、样例与基准测试，覆盖推理、推荐与集合通信场景。</p>
-          <div class="chips"><span class="chip">ZBAL</span><span class="chip">TensorRTL</span><span class="chip">examples</span><span class="chip">benchmark</span></div>
-        </article>
-        <div class="arch-conn">北向 C / Python API</div>
-        <article class="layer" data-layer="smem">
-          <div class="layer-top"><span class="layer-idx">L3</span><h3>语义与接口层 · smem</h3><span class="layer-tag">libmf_smem.so</span></div>
-          <p>BM / TRANS / SHM / Offload 四类语义，以及句柄与生命周期管理、参数校验、错误码和 Python 绑定。</p>
-          <div class="chips"><span class="chip">smem_bm</span><span class="chip">smem_trans</span><span class="chip">smem_shm</span><span class="chip">config_store</span><span class="chip">group manager</span></div>
-        </article>
-        <div class="arch-conn">hybm_* 内部接口</div>
-        <article class="layer" data-layer="hybm">
-          <div class="layer-top"><span class="layer-idx">L2</span><h3>内存与传输核心 · hybm</h3><span class="layer-tag">libmf_hybm_core.so</span></div>
-          <p>全局地址空间、内存段、Exchange Info、导入映射、传输连接与数据算子。</p>
-          <div class="chips"><span class="chip">entity</span><span class="chip">mm / VA</span><span class="chip">transport</span><span class="chip">data_operation</span><span class="chip">ts_engine</span><span class="chip">under_api</span></div>
-        </article>
-        <div class="arch-conn">控制协议 / 系统调用 / 驱动 API</div>
-        <article class="layer" data-layer="infra">
-          <div class="layer-top"><span class="layer-idx">L1</span><h3>控制面与基础设施</h3><span class="layer-tag">CROSS-CUTTING</span></div>
-          <p>成员与元数据、TCP/HTTP 控制通道、TLS、HA、性能打点，以及 ACL / HAL / HCCP / HCOM 驱动接口。</p>
-          <div class="chips"><span class="chip">TcpConfigStore</span><span class="chip">etcd backend</span><span class="chip">GroupManager</span><span class="chip">acc_links</span><span class="chip">ptracer</span></div>
-        </article>
+    <div class="gc-figure reveal">
+      <div class="gc-bar">
+        <span class="gc-title">全局代码结构与调用关系</span>
+        <span class="gc-cap" id="gcCap">上层只调用下层的公开接口，跨层直调仅出现在 smem → hybm 一处。悬停模块查看职责，点击跳转模块详情。</span>
       </div>
+      <div class="gc-scroll">
+        <svg class="gc-svg" id="gcSvg" viewBox="0 0 1000 622" role="img" aria-label="MemFabric Hybrid 分层代码结构图">
+          <defs>
+            <marker id="gcArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
+              orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1a73c9"/></marker>
+          </defs>
 
-      <aside class="detail" id="archDetail" aria-live="polite"></aside>
+          <g class="layer" data-layer="L0"><rect x="8" y="12" width="984" height="70" rx="10"/></g>
+          <g class="layer" data-layer="L1"><rect x="8" y="108" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L2"><rect x="8" y="210" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L3"><rect x="8" y="312" width="984" height="104" rx="10"/></g>
+          <g class="layer" data-layer="L4"><rect x="8" y="442" width="984" height="76" rx="10"/></g>
+          <g class="layer" data-layer="L5"><rect x="8" y="544" width="984" height="66" rx="10"/></g>
+
+          <text class="lx" x="20" y="34">L0</text>
+          <text class="ln" x="20" y="49">接口层</text>
+          <text class="ln" x="20" y="63">C · Python</text>
+          <text class="lx" x="20" y="130">L1</text>
+          <text class="ln" x="20" y="145">语义层</text>
+          <text class="ln" x="20" y="159">四类语义</text>
+          <text class="lx" x="20" y="232">L2</text>
+          <text class="ln" x="20" y="247">控制面</text>
+          <text class="ln" x="20" y="261">store · group</text>
+          <text class="lx" x="20" y="334">L3</text>
+          <text class="ln" x="20" y="349">核心层</text>
+          <text class="ln" x="20" y="363">hybm core</text>
+          <text class="lx" x="20" y="464">L4</text>
+          <text class="ln" x="20" y="479">平台抽象</text>
+          <text class="ln" x="20" y="493">dl_* 封装</text>
+          <text class="lx" x="20" y="566">L5</text>
+          <text class="ln" x="20" y="581">运行时</text>
+          <text class="ln" x="20" y="595">CANN · NIC</text>
+
+          <text class="gap-lbl" x="112" y="100">C API / Python 绑定调用</text>
+          <line class="flow" x1="420" y1="85" x2="420" y2="104" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="85" x2="700" y2="104" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="202">CheckIn / Join / Watch：组网与信息交换</text>
+          <line class="flow" x1="420" y1="187" x2="420" y2="206" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="187" x2="700" y2="206" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="304">hybm_* 领域调用（跨过控制面）</text>
+          <line class="flow" x1="420" y1="289" x2="420" y2="308" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="289" x2="700" y2="308" marker-end="url(#gcArr)"/>
+          <line class="flow dash" x1="399.5" y1="176" x2="399.5" y2="316" marker-end="url(#gcArr)"/>
+          <text class="gap-lbl" x="392" y="304" text-anchor="end">hybm_* 直调</text>
+
+          <text class="gap-lbl" x="112" y="434">dl_* 动态加载：ACL / HAL / HCOMM / Extend</text>
+          <line class="flow" x1="420" y1="419" x2="420" y2="438" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="419" x2="700" y2="438" marker-end="url(#gcArr)"/>
+
+          <text class="gap-lbl" x="112" y="536">运行时接口：stream · 内存映射 · 远端访问</text>
+          <line class="flow" x1="420" y1="521" x2="420" y2="540" marker-end="url(#gcArr)"/>
+          <line class="flow" x1="700" y1="521" x2="700" y2="540" marker-end="url(#gcArr)"/>
+
+          <g class="gc-box" data-layer="L0" data-mod="app" data-cap="应用与示例：直接调用 C API 或 Python 绑定，不依赖内部实现。">
+            <rect class="box" x="112" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="126" y="42">App / examples</text><text class="bs" x="126" y="58">zbal · tensorRTL</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="对外 C 接口：smem_bm_* / smem_trans_*，是 App 与语义层之间的唯一契约。">
+            <rect class="box" x="332" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="346" y="42">C API</text><text class="bs" x="346" y="58">smem_bm.h · smem_trans.h</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="Python 绑定，最终调用同一套 C API。">
+            <rect class="box" x="552" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="566" y="42">Python API</text><text class="bs" x="566" y="58">pybind11 绑定</text>
+          </g>
+          <g class="gc-box" data-layer="L0" data-mod="offload" data-cap="Offload 对外接口：提交稀疏拷贝任务到 AIV 核，不经过 smem 调用链。">
+            <rect class="box" x="772" y="20" width="210" height="54" rx="8"/>
+            <text class="bt" x="786" y="42">acc_offload API</text><text class="bs" x="786" y="58">offload_sparse_copy</text>
+          </g>
+
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM BM：管理 HBM/DRAM 池、GVA 编址与 smem_bm_copy，向下调用 hybm entity 与 data_operation。">
+            <rect class="box" x="112" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="126" y="140">smem_bm</text><text class="bs" x="126" y="158">池化 · GVA 拷贝</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM TRANS：面向已注册内存的点对点传输，复用 hybm 的建链与 DataOperator。">
+            <rect class="box" x="332" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="346" y="140">smem_trans</text><text class="bs" x="346" y="158">注册内存点对点</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM SHM：同机进程与算子间共享内存，不经过网络传输。">
+            <rect class="box" x="552" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="566" y="140">smem_shm</text><text class="bs" x="566" y="158">同机算子共享</text>
+          </g>
+          <g class="gc-box" data-layer="L1" data-mod="offload" data-cap="Offload 实现：AIV 核并行稀疏拷贝，调用 ACL 与算子 launch，不依赖 hybm。">
+            <rect class="box" x="772" y="116" width="210" height="60" rx="8"/>
+            <text class="bt" x="786" y="140">acc_offload</text><text class="bs" x="786" y="158">稀疏拷贝算子</text>
+          </g>
+
+          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="配置存储：TCP 模式由 rank0 兼服务端，etcd 模式接入外部集群并由租约选主。">
+            <rect class="box" x="112" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="126" y="242">Config Store</text><text class="bs" x="126" y="260">TCP / etcd · KV · Watch · CAS</text>
+          </g>
+          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="组管理：维护 rank 生命周期与有向链路状态，驱动信息交换、import、建链与 ACTIVE 提升。">
+            <rect class="box" x="407" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="421" y="242">Group Manager</text><text class="bs" x="421" y="260">Server(rank0) + Client 状态机</text>
+          </g>
+          <g class="gc-box" data-layer="L2" data-mod="links" data-cap="acc_links：进程间控制通道，承载算子侧控制消息，与数据面解耦。">
+            <rect class="box" x="702" y="218" width="280" height="60" rx="8"/>
+            <text class="bt" x="716" y="242">acc_links</text><text class="bs" x="716" y="260">IPC 控制通道</text>
+          </g>
+
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="hybm 门面：持有内存段、VA 映射与 DataOperator；CopyData 负责定位 rank 并选择算子。">
+            <rect class="box" x="112" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="126" y="346">Entity</text><text class="bs" x="126" y="366">MemEntityDefault</text>
+            <text class="bs" x="126" y="384">Create · Join · CopyData</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="算子链：按 rank2RankOpType 优先级选择具体 DataOp，向上屏蔽协议差异。">
+            <rect class="box" x="332" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="346" y="346">DataOperator</text><text class="bs" x="346" y="366">HostComposeDataOp</text>
+            <text class="bs" x="346" y="384">SDMA · URMA · RDMA · TCP</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="传输层：每 rank 一个实例，负责建链、内存键交换与 WriteRemote / ReadRemote。">
+            <rect class="box" x="552" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="566" y="346">TransportManager</text><text class="bs" x="566" y="366">HCOM · RDMA · URMA · UBoE</text>
+            <text class="bs" x="566" y="384">WriteRemote / ReadRemote</text>
+          </g>
+          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="内存与流：GVA 编址与地址转换、stream 复用、注册内存池。">
+            <rect class="box" x="772" y="320" width="210" height="88" rx="8"/>
+            <text class="bt" x="786" y="346">内存与流</text><text class="bs" x="786" y="366">GVA / VA Manager</text>
+            <text class="bs" x="786" y="384">Stream Manager · 内存池</text>
+          </g>
+
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="ACL 动态加载封装：设备使能、memcpy、stream 同步。">
+            <rect class="box" x="112" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="126" y="474">DlAclApi</text><text class="bs" x="126" y="492">ACL runtime 封装</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="HAL 封装：host 内存注册与设备地址映射。">
+            <rect class="box" x="332" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="346" y="474">DlHalApi</text><text class="bs" x="346" y="492">HAL / 内存映射</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="通信与扩展算子封装：HCCP 建链、批量扩展拷贝。">
+            <rect class="box" x="552" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="566" y="474">DlHcommApi / Extend</text><text class="bs" x="566" y="492">HCCP · HybmCopyExtend</text>
+          </g>
+          <g class="gc-box" data-layer="L4" data-mod="util" data-cap="公共设施：日志、环境变量解析、etcd Go 共享库与工具类。">
+            <rect class="box" x="772" y="450" width="210" height="60" rx="8"/>
+            <text class="bt" x="786" y="474">util</text><text class="bs" x="786" y="492">日志 · env · etcd Go 后端</text>
+          </g>
+
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="昇腾运行时：设备、stream 与内存管理。">
+            <rect class="box" x="112" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="126" y="576">CANN / ACL Runtime</text><text class="bs" x="126" y="592">device · stream</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="HCCP / UB：链路建立与事件通知。">
+            <rect class="box" x="332" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="346" y="576">HCCP / UB</text><text class="bs" x="346" y="592">建链 · 事件通知</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="网卡能力：URMA / RoCE 单边读写与完成事件。">
+            <rect class="box" x="552" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="566" y="576">URMA / RoCE NIC</text><text class="bs" x="566" y="592">单边读写</text>
+          </g>
+          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="片内搬运引擎：SDMA / MTE / AIV 核执行实际数据搬移。">
+            <rect class="box" x="772" y="552" width="210" height="50" rx="8"/>
+            <text class="bt" x="786" y="576">SDMA / MTE / AIV</text><text class="bs" x="786" y="592">片内搬运</text>
+          </g>
+        </svg>
+      </div>
     </div>
 
-    <div class="note reveal">
-      <span><b>分层依据：</b>BM / TRANS / SHM 的差异在于内存组织方式与访问权限，地址翻译、建链与单边读写是共性能力。
-      共性下沉到 hybm 后，新增语义只需组合现有能力，新增链路只需实现 TransportManager 与 DataOperator 两个抽象。</span>
+    <div class="code-grid reveal">
+      <div class="tree-box">
+        <ul class="tree">
+          <li>
+            <button class="root active" data-mod="root">memfabric_hybrid<span class="meta">372 files</span></button>
+            <ul>
+              <li><button data-mod="smem">src/smem<span class="meta">102 · 28.4k</span></button></li>
+              <li><button data-mod="hybm">src/hybm<span class="meta">169 · 47.5k</span></button></li>
+              <li><button data-mod="offload">src/acc_offload<span class="meta">26 · 4.0k</span></button></li>
+              <li><button data-mod="links">src/acc_links<span class="meta">47 · 9.0k</span></button></li>
+              <li><button data-mod="util">src/util<span class="meta">28 · 5.6k</span></button></li>
+              <li><button data-mod="include">public headers<span class="meta">C · PYTHON API</span></button></li>
+              <li><button data-mod="app">app + examples<span class="meta">CONSUMERS</span></button></li>
+              <li><button data-mod="test">test/ut<span class="meta">105 files</span></button></li>
+              <li><button data-mod="script">script + docs<span class="meta">BUILD · DOCS</span></button></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <aside class="code-detail" id="codeDetail" aria-live="polite"></aside>
+    </div>
+
+    <div class="grid g3" style="margin-top:18px">
+      <article class="card reveal">
+        <h3>语义层与核心层</h3>
+        <p><span class="kbd">smem_bm</span> 管理池化与 GVA 拷贝，<span class="kbd">smem_trans</span> 处理已注册内存的点对点传输，
+        <span class="kbd">smem_shm</span> 提供同机算子共享。三者复用 hybm 的地址、建链与算子。</p>
+      </article>
+      <article class="card blue reveal">
+        <h3>南向扩展点</h3>
+        <p>新增链路需实现 <span class="kbd">TransportManager</span>（信息交换、连接、可达性）与
+        <span class="kbd">DataOperator</span>（按描述符搬运）。上层按优先级与 tag 选择，不感知具体协议。</p>
+      </article>
+      <article class="card gold reveal">
+        <h3>控制面实现</h3>
+        <p>Config Store 抽象 KV、Watch、CAS 与选主能力。TCP 模式无外部依赖，rank0 兼任服务端；etcd 模式提供租约与 HA，
+        通过 Go 共享库接入。</p>
+      </article>
     </div>
   </section>
 
@@ -814,15 +981,15 @@
           <text class="muted-t" x="500" y="236" text-anchor="middle">one-sided read / write</text>
 
           <path id="dpFlowPath" class="flowline" d="M 230 128 C 470 70, 530 330, 700 308"/>
-          <circle id="dpGlow" r="13" fill="rgba(255,196,92,.16)"/>
-          <circle id="dpPacket" r="4.5" fill="#ffc45c"/>
+          <circle id="dpGlow" r="13" fill="rgba(176,112,8,.16)"/>
+          <circle id="dpPacket" r="4.5" fill="#a86b06"/>
           <text id="dpPathLabel" class="muted-t" x="500" y="398" text-anchor="middle">选择右侧的一种访问方向</text>
         </svg>
         <div class="legend">
-          <span><i style="background:rgba(60,230,168,.6)"></i>HBM / Device</span>
-          <span><i style="background:rgba(76,184,255,.6)"></i>DRAM / GVM</span>
-          <span><i style="background:rgba(139,124,255,.6)"></i>互联网络</span>
-          <span><i style="background:#ffc45c"></i>数据包</span>
+          <span><i style="background:rgba(14,154,112,.6)"></i>HBM / Device</span>
+          <span><i style="background:rgba(26,115,201,.6)"></i>DRAM / GVM</span>
+          <span><i style="background:rgba(91,79,214,.6)"></i>互联网络</span>
+          <span><i style="background:#a86b06"></i>数据包</span>
         </div>
       </div>
 
@@ -909,9 +1076,9 @@
       <svg viewBox="0 0 1000 470" role="img" aria-label="组网示意图：Config Store、Group Manager、Transport 与各 rank 的关系">
         <defs>
           <marker id="mArrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
-                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4cb8ff"/></marker>
+                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1a73c9"/></marker>
           <marker id="mArrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
-                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3ce6a8"/></marker>
+                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#0b7d59"/></marker>
         </defs>
 
         <text class="m-phase" x="165" y="24">① 注册</text>
@@ -1221,7 +1388,7 @@
         <ul class="cmp">
           <li>一次调用下发源地址数组、目的地址数组、长度数组与任务数，只产生一个 stream 任务。</li>
           <li>数组与任务数驻留 device 内存，kernel 直接读取，不需要 host 回读或逐段下发。</li>
-          <li>48 / 64 个 AIV 核并行处理不同段；段数少于核数时按字节区间切分。</li>
+          <li>搬运由卡侧多核并行完成，host 不再逐段驱动，也不再受单段启动开销拖累。</li>
           <li>段与段之间不要求连续、等长或同序，源和目的可各自独立寻址。</li>
         </ul>
       </article>
@@ -1237,230 +1404,224 @@
            aria-label="逐段调用与单次稀疏拷贝的各执行阶段对比动画"></svg>
     </div>
 
-    <div class="note reveal">
-      <span><b>执行路径：</b><span class="mono">offload_sparse_copy</span> 在 host 侧只做指针解析，随后把四个 device 指针
-      提交到当前 NPU stream（<span class="mono">torch_npu RunOpApiV2</span>）。kernel 读取任务数后选择分支：
-      任务数 ≥ AIV 核数时，按 K/V 配对处理（前一半为 K、后一半为 V），每个核按核号轮转取组，K 与 V 连续搬入同一块 UB，
-      并使用双缓冲使下一组的 CopyIn 与当前组的 CopyOut 重叠；任务数少于核数时，按总字节数均分给各核，
-      单段可被多个核切分。每段数据以 176 KB 为单位经 UB 执行 <span class="mono">DataCopyPad</span> GM→UB→GM，
-      全核完成后由 stream 统一提交完成状态。</span>
-    </div>
-  </section>
+    <h3 class="sub-head reveal">底层调用链路：host → ACL → AIV</h3>
+    <p class="seq-lead reveal">
+      一次 <span class="mono">sparse_copy</span> 只产生一次算子下发。host 侧解析四个 device 指针并把它挂到调用方的
+      ACL stream；任务数、地址数组与长度数组始终留在 device 内存，由 AIV 核自行读取、切分与搬运。
+    </p>
 
-  <!-- CODE MAP -->
-  <section id="code">
-    <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">09</span> CODE MAP</div>
-      <h2>代码结构</h2>
-      <p class="lead">
-        仓库按语义层、核心层、控制面与应用划分。src/smem 生成 libmf_smem.so，src/hybm 生成 libmf_hybm_core.so，
-        Offload 与 acc_links 各自成库；控制面同时提供进程内 TCP Store 与可选 etcd 后端。上方结构图给出层次与调用方向，
-        下方按模块展开，点击左侧模块查看职责与入口文件。
-      </p>
-    </div>
-
-    <div class="gc-figure reveal">
-      <div class="gc-bar">
-        <span class="gc-title">全局代码结构与调用关系</span>
-        <span class="gc-cap" id="gcCap">上层只调用下层的公开接口，跨层直调仅出现在 smem → hybm 一处。悬停模块查看职责，点击跳转模块详情。</span>
+    <div class="chain reveal">
+      <div class="chain-step">
+        <span class="ci">01</span>
+        <div>
+          <h4>Python 封装与 C 入口</h4>
+          <p><code>mf_acc_offload.sparse_copy</code> 转调 pybind11 绑定，绑定以 <code>gil_scoped_release</code>
+          释放 GIL 后进入 C 接口；<code>offload_sparse_copy</code> 只把整数重解释为指针，不做任何数据访问。</p>
+        </div>
+        <span class="cf">pymf_acc_offload.cpp · acc_offload.cpp</span>
       </div>
-      <div class="gc-scroll">
-        <svg class="gc-svg" id="gcSvg" viewBox="0 0 1000 622" role="img" aria-label="MemFabric Hybrid 分层代码结构图">
-          <defs>
-            <marker id="gcArr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
-              orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#4cb8ff"/></marker>
-          </defs>
-
-          <g class="layer" data-layer="L0"><rect x="8" y="12" width="984" height="70" rx="10"/></g>
-          <g class="layer" data-layer="L1"><rect x="8" y="108" width="984" height="76" rx="10"/></g>
-          <g class="layer" data-layer="L2"><rect x="8" y="210" width="984" height="76" rx="10"/></g>
-          <g class="layer" data-layer="L3"><rect x="8" y="312" width="984" height="104" rx="10"/></g>
-          <g class="layer" data-layer="L4"><rect x="8" y="442" width="984" height="76" rx="10"/></g>
-          <g class="layer" data-layer="L5"><rect x="8" y="544" width="984" height="66" rx="10"/></g>
-
-          <text class="lx" x="20" y="34">L0</text>
-          <text class="ln" x="20" y="49">接口层</text>
-          <text class="ln" x="20" y="63">C · Python</text>
-          <text class="lx" x="20" y="130">L1</text>
-          <text class="ln" x="20" y="145">语义层</text>
-          <text class="ln" x="20" y="159">四类语义</text>
-          <text class="lx" x="20" y="232">L2</text>
-          <text class="ln" x="20" y="247">控制面</text>
-          <text class="ln" x="20" y="261">store · group</text>
-          <text class="lx" x="20" y="334">L3</text>
-          <text class="ln" x="20" y="349">核心层</text>
-          <text class="ln" x="20" y="363">hybm core</text>
-          <text class="lx" x="20" y="464">L4</text>
-          <text class="ln" x="20" y="479">平台抽象</text>
-          <text class="ln" x="20" y="493">dl_* 封装</text>
-          <text class="lx" x="20" y="566">L5</text>
-          <text class="ln" x="20" y="581">运行时</text>
-          <text class="ln" x="20" y="595">CANN · NIC</text>
-
-          <text class="gap-lbl" x="112" y="100">C API / Python 绑定调用</text>
-          <line class="flow" x1="420" y1="85" x2="420" y2="104" marker-end="url(#gcArr)"/>
-          <line class="flow" x1="700" y1="85" x2="700" y2="104" marker-end="url(#gcArr)"/>
-
-          <text class="gap-lbl" x="112" y="202">CheckIn / Join / Watch：组网与信息交换</text>
-          <line class="flow" x1="420" y1="187" x2="420" y2="206" marker-end="url(#gcArr)"/>
-          <line class="flow" x1="700" y1="187" x2="700" y2="206" marker-end="url(#gcArr)"/>
-
-          <text class="gap-lbl" x="112" y="304">hybm_* 领域调用（跨过控制面）</text>
-          <line class="flow" x1="420" y1="289" x2="420" y2="308" marker-end="url(#gcArr)"/>
-          <line class="flow" x1="700" y1="289" x2="700" y2="308" marker-end="url(#gcArr)"/>
-          <line class="flow dash" x1="399.5" y1="176" x2="399.5" y2="316" marker-end="url(#gcArr)"/>
-          <text class="gap-lbl" x="392" y="304" text-anchor="end">hybm_* 直调</text>
-
-          <text class="gap-lbl" x="112" y="434">dl_* 动态加载：ACL / HAL / HCOMM / Extend</text>
-          <line class="flow" x1="420" y1="419" x2="420" y2="438" marker-end="url(#gcArr)"/>
-          <line class="flow" x1="700" y1="419" x2="700" y2="438" marker-end="url(#gcArr)"/>
-
-          <text class="gap-lbl" x="112" y="536">运行时接口：stream · 内存映射 · 远端访问</text>
-          <line class="flow" x1="420" y1="521" x2="420" y2="540" marker-end="url(#gcArr)"/>
-          <line class="flow" x1="700" y1="521" x2="700" y2="540" marker-end="url(#gcArr)"/>
-
-          <g class="gc-box" data-layer="L0" data-mod="app" data-cap="应用与示例：直接调用 C API 或 Python 绑定，不依赖内部实现。">
-            <rect class="box" x="112" y="20" width="210" height="54" rx="8"/>
-            <text class="bt" x="126" y="42">App / examples</text><text class="bs" x="126" y="58">zbal · tensorRTL</text>
-          </g>
-          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="对外 C 接口：smem_bm_* / smem_trans_*，是 App 与语义层之间的唯一契约。">
-            <rect class="box" x="332" y="20" width="210" height="54" rx="8"/>
-            <text class="bt" x="346" y="42">C API</text><text class="bs" x="346" y="58">smem_bm.h · smem_trans.h</text>
-          </g>
-          <g class="gc-box" data-layer="L0" data-mod="include" data-cap="Python 绑定，最终调用同一套 C API。">
-            <rect class="box" x="552" y="20" width="210" height="54" rx="8"/>
-            <text class="bt" x="566" y="42">Python API</text><text class="bs" x="566" y="58">pybind11 绑定</text>
-          </g>
-          <g class="gc-box" data-layer="L0" data-mod="offload" data-cap="Offload 对外接口：提交稀疏拷贝任务到 AIV 核，不经过 smem 调用链。">
-            <rect class="box" x="772" y="20" width="210" height="54" rx="8"/>
-            <text class="bt" x="786" y="42">acc_offload API</text><text class="bs" x="786" y="58">offload_sparse_copy</text>
-          </g>
-
-          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM BM：管理 HBM/DRAM 池、GVA 编址与 smem_bm_copy，向下调用 hybm entity 与 data_operation。">
-            <rect class="box" x="112" y="116" width="210" height="60" rx="8"/>
-            <text class="bt" x="126" y="140">smem_bm</text><text class="bs" x="126" y="158">池化 · GVA 拷贝</text>
-          </g>
-          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM TRANS：面向已注册内存的点对点传输，复用 hybm 的建链与 DataOperator。">
-            <rect class="box" x="332" y="116" width="210" height="60" rx="8"/>
-            <text class="bt" x="346" y="140">smem_trans</text><text class="bs" x="346" y="158">注册内存点对点</text>
-          </g>
-          <g class="gc-box" data-layer="L1" data-mod="smem" data-cap="SMEM SHM：同机进程与算子间共享内存，不经过网络传输。">
-            <rect class="box" x="552" y="116" width="210" height="60" rx="8"/>
-            <text class="bt" x="566" y="140">smem_shm</text><text class="bs" x="566" y="158">同机算子共享</text>
-          </g>
-          <g class="gc-box" data-layer="L1" data-mod="offload" data-cap="Offload 实现：AIV 核并行稀疏拷贝，调用 ACL 与算子 launch，不依赖 hybm。">
-            <rect class="box" x="772" y="116" width="210" height="60" rx="8"/>
-            <text class="bt" x="786" y="140">acc_offload</text><text class="bs" x="786" y="158">稀疏拷贝算子</text>
-          </g>
-
-          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="配置存储：TCP 模式由 rank0 兼服务端，etcd 模式接入外部集群并由租约选主。">
-            <rect class="box" x="112" y="218" width="280" height="60" rx="8"/>
-            <text class="bt" x="126" y="242">Config Store</text><text class="bs" x="126" y="260">TCP / etcd · KV · Watch · CAS</text>
-          </g>
-          <g class="gc-box" data-layer="L2" data-mod="smem" data-cap="组管理：维护 rank 生命周期与有向链路状态，驱动信息交换、import、建链与 ACTIVE 提升。">
-            <rect class="box" x="407" y="218" width="280" height="60" rx="8"/>
-            <text class="bt" x="421" y="242">Group Manager</text><text class="bs" x="421" y="260">Server(rank0) + Client 状态机</text>
-          </g>
-          <g class="gc-box" data-layer="L2" data-mod="links" data-cap="acc_links：进程间控制通道，承载算子侧控制消息，与数据面解耦。">
-            <rect class="box" x="702" y="218" width="280" height="60" rx="8"/>
-            <text class="bt" x="716" y="242">acc_links</text><text class="bs" x="716" y="260">IPC 控制通道</text>
-          </g>
-
-          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="hybm 门面：持有内存段、VA 映射与 DataOperator；CopyData 负责定位 rank 并选择算子。">
-            <rect class="box" x="112" y="320" width="210" height="88" rx="8"/>
-            <text class="bt" x="126" y="346">Entity</text><text class="bs" x="126" y="366">MemEntityDefault</text>
-            <text class="bs" x="126" y="384">Create · Join · CopyData</text>
-          </g>
-          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="算子链：按 rank2RankOpType 优先级选择具体 DataOp，向上屏蔽协议差异。">
-            <rect class="box" x="332" y="320" width="210" height="88" rx="8"/>
-            <text class="bt" x="346" y="346">DataOperator</text><text class="bs" x="346" y="366">HostComposeDataOp</text>
-            <text class="bs" x="346" y="384">SDMA · URMA · RDMA · TCP</text>
-          </g>
-          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="传输层：每 rank 一个实例，负责建链、内存键交换与 WriteRemote / ReadRemote。">
-            <rect class="box" x="552" y="320" width="210" height="88" rx="8"/>
-            <text class="bt" x="566" y="346">TransportManager</text><text class="bs" x="566" y="366">HCOM · RDMA · URMA · UBoE</text>
-            <text class="bs" x="566" y="384">WriteRemote / ReadRemote</text>
-          </g>
-          <g class="gc-box" data-layer="L3" data-mod="hybm" data-cap="内存与流：GVA 编址与地址转换、stream 复用、注册内存池。">
-            <rect class="box" x="772" y="320" width="210" height="88" rx="8"/>
-            <text class="bt" x="786" y="346">内存与流</text><text class="bs" x="786" y="366">GVA / VA Manager</text>
-            <text class="bs" x="786" y="384">Stream Manager · 内存池</text>
-          </g>
-
-          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="ACL 动态加载封装：设备使能、memcpy、stream 同步。">
-            <rect class="box" x="112" y="450" width="210" height="60" rx="8"/>
-            <text class="bt" x="126" y="474">DlAclApi</text><text class="bs" x="126" y="492">ACL runtime 封装</text>
-          </g>
-          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="HAL 封装：host 内存注册与设备地址映射。">
-            <rect class="box" x="332" y="450" width="210" height="60" rx="8"/>
-            <text class="bt" x="346" y="474">DlHalApi</text><text class="bs" x="346" y="492">HAL / 内存映射</text>
-          </g>
-          <g class="gc-box" data-layer="L4" data-mod="hybm" data-cap="通信与扩展算子封装：HCCP 建链、批量扩展拷贝。">
-            <rect class="box" x="552" y="450" width="210" height="60" rx="8"/>
-            <text class="bt" x="566" y="474">DlHcommApi / Extend</text><text class="bs" x="566" y="492">HCCP · HybmCopyExtend</text>
-          </g>
-          <g class="gc-box" data-layer="L4" data-mod="util" data-cap="公共设施：日志、环境变量解析、etcd Go 共享库与工具类。">
-            <rect class="box" x="772" y="450" width="210" height="60" rx="8"/>
-            <text class="bt" x="786" y="474">util</text><text class="bs" x="786" y="492">日志 · env · etcd Go 后端</text>
-          </g>
-
-          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="昇腾运行时：设备、stream 与内存管理。">
-            <rect class="box" x="112" y="552" width="210" height="50" rx="8"/>
-            <text class="bt" x="126" y="576">CANN / ACL Runtime</text><text class="bs" x="126" y="592">device · stream</text>
-          </g>
-          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="HCCP / UB：链路建立与事件通知。">
-            <rect class="box" x="332" y="552" width="210" height="50" rx="8"/>
-            <text class="bt" x="346" y="576">HCCP / UB</text><text class="bs" x="346" y="592">建链 · 事件通知</text>
-          </g>
-          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="网卡能力：URMA / RoCE 单边读写与完成事件。">
-            <rect class="box" x="552" y="552" width="210" height="50" rx="8"/>
-            <text class="bt" x="566" y="576">URMA / RoCE NIC</text><text class="bs" x="566" y="592">单边读写</text>
-          </g>
-          <g class="gc-box" data-layer="L5" data-mod="hybm" data-cap="片内搬运引擎：SDMA / MTE / AIV 核执行实际数据搬移。">
-            <rect class="box" x="772" y="552" width="210" height="50" rx="8"/>
-            <text class="bt" x="786" y="576">SDMA / MTE / AIV</text><text class="bs" x="786" y="592">片内搬运</text>
-          </g>
-        </svg>
+      <div class="chain-step">
+        <span class="ci">02</span>
+        <div>
+          <h4>场景分派与参数校验</h4>
+          <p>按 LOCAL / SHARED 选择 entry；校验项只有 entry 是否初始化与 <code>deviceId</code> 是否越界（≤255）。
+          地址与长度仅按数值信任，不做范围扫描——这是保持 host 侧零遍历的前提。</p>
+        </div>
+        <span class="cf">acc_offload_entry_manager.cpp</span>
+      </div>
+      <div class="chain-step">
+        <span class="ci">03</span>
+        <div>
+          <h4>算子库懒加载</h4>
+          <p><code>libmf_hybm_accoffload.so</code> 在首次调用时 <code>dlopen(RTLD_NOW | RTLD_NODELETE)</code>，
+          再用 <code>DL_LOAD_SYM_OPTIONAL</code> 取 <code>AccOffloadSparseCopy</code>。算子包按 SoC 版本单独构建，
+          缺失时只返回错误码，主库仍可正常使用其余能力。</p>
+        </div>
+        <span class="cf">acc_offload_launch.cpp</span>
+      </div>
+      <div class="chain-step">
+        <span class="ci">04</span>
+        <div>
+          <h4>绑定 device 与取 stream</h4>
+          <p><code>OptionalNPUGuard::set_index(devIdx)</code> 切换当前 device，随后
+          <code>getCurrentNPUStream(devIdx).stream(false)</code> 取出调用方的 <code>aclrtStream</code>。
+          库内不新建流，也不做 <code>Synchronize</code>，排序完全交给 stream。</p>
+        </div>
+        <span class="cf">acc_offload_operators_launch.cpp</span>
+      </div>
+      <div class="chain-step">
+        <span class="ci">05</span>
+        <div>
+          <h4>算子 Launch</h4>
+          <p><code>OpCommand::RunOpApiV2("acc_sparse_copy", cb)</code> 把回调纳入 torch_npu 的算子执行框架，
+          回调里执行 <code>OffloadSparseCopyOps&lt;&lt;&lt;blockDim, nullptr, stream&gt;&gt;&gt;</code>。
+          blockDim 取 AIV 核数：A3 为 48，A5 为 64，一次 launch 覆盖整批任务。</p>
+        </div>
+        <span class="cf">acc_offload_operators_launch.cpp · acc_offload_sparse_copy.cpp</span>
+      </div>
+      <div class="chain-step">
+        <span class="ci">06</span>
+        <div>
+          <h4>AIV 取数与分支</h4>
+          <p>kernel 以 <code>KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIV_ONLY)</code> 声明为纯 AIV 任务，
+          <code>GetBlockNum / GetBlockIdx</code> 给出核数与核号；任务数由 <code>*size</code> 从 device 内存读出，
+          按 <code>size ≥ 核数</code> 选择 K/V 配对或字节均分分支。</p>
+        </div>
+        <span class="cf">acc_offload_sparse_copy.h</span>
+      </div>
+      <div class="chain-step">
+        <span class="ci">07</span>
+        <div>
+          <h4>GM → UB → GM</h4>
+          <p>每段经 <code>DataCopyPad</code> 搬入 UB 再写出，长度按字节给出，非对齐尾块由 pad 参数处理；
+          末尾 <code>PipeBarrier&lt;PIPE_ALL&gt;</code> 保证写回对本流后续算子可见。</p>
+        </div>
+        <span class="cf">acc_offload_sparse_copy.h</span>
       </div>
     </div>
 
-    <div class="code-grid reveal">
-      <div class="tree-box">
-        <ul class="tree">
-          <li>
-            <button class="root active" data-mod="root">memfabric_hybrid<span class="meta">372 files</span></button>
-            <ul>
-              <li><button data-mod="smem">src/smem<span class="meta">102 · 28.4k</span></button></li>
-              <li><button data-mod="hybm">src/hybm<span class="meta">169 · 47.5k</span></button></li>
-              <li><button data-mod="offload">src/acc_offload<span class="meta">26 · 4.0k</span></button></li>
-              <li><button data-mod="links">src/acc_links<span class="meta">47 · 9.0k</span></button></li>
-              <li><button data-mod="util">src/util<span class="meta">28 · 5.6k</span></button></li>
-              <li><button data-mod="include">public headers<span class="meta">C · PYTHON API</span></button></li>
-              <li><button data-mod="app">app + examples<span class="meta">CONSUMERS</span></button></li>
-              <li><button data-mod="test">test/ut<span class="meta">105 files</span></button></li>
-              <li><button data-mod="script">script + docs<span class="meta">BUILD · DOCS</span></button></li>
-            </ul>
-          </li>
+    <figure class="launch-fig reveal">
+      <svg viewBox="0 0 1000 330" role="img" aria-label="算子 launch 与 AIV 核映射示意图">
+        <defs>
+          <marker id="lfArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+                  orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6b7f96"/></marker>
+        </defs>
+
+        <text class="lf-h" x="20" y="22">HOST · 调用线程</text>
+        <rect class="lf-box" x="20" y="36" width="288" height="46" rx="9"/>
+        <text class="lf-t" x="34" y="56">1 · OptionalNPUGuard</text>
+        <text class="lf-s" x="34" y="72">set_index(devIdx) 切换当前 device</text>
+
+        <rect class="lf-box" x="20" y="92" width="288" height="46" rx="9"/>
+        <text class="lf-t" x="34" y="112">2 · getCurrentNPUStream(devIdx)</text>
+        <text class="lf-s" x="34" y="128">.stream(false) 取调用方 aclrtStream</text>
+
+        <rect class="lf-box" x="20" y="148" width="288" height="46" rx="9"/>
+        <text class="lf-t" x="34" y="168">3 · OpCommand::RunOpApiV2</text>
+        <text class="lf-s" x="34" y="184">"acc_sparse_copy" · 纳入算子框架</text>
+
+        <rect class="lf-hot" x="20" y="204" width="288" height="46" rx="9"/>
+        <text class="lf-t" x="34" y="224">4 · AscendC Launch</text>
+        <text class="lf-s" x="34" y="240">OffloadSparseCopyOps&lt;&lt;&lt;blockDim, stream&gt;&gt;&gt;</text>
+
+        <text class="lf-h" x="336" y="22">ACL STREAM</text>
+        <rect class="lf-box" x="336" y="36" width="188" height="46" rx="9"/>
+        <text class="lf-s" x="430" y="56" text-anchor="middle">上一条算子</text>
+        <text class="lf-s" x="430" y="72" text-anchor="middle">同一 stream，保序</text>
+
+        <rect class="lf-hot" x="336" y="96" width="188" height="58" rx="9"/>
+        <text class="lf-t" x="430" y="118" text-anchor="middle">acc_sparse_copy</text>
+        <text class="lf-s" x="430" y="135" text-anchor="middle">1 个任务 · 整批段</text>
+
+        <rect class="lf-box" x="336" y="168" width="188" height="46" rx="9"/>
+        <text class="lf-s" x="430" y="188" text-anchor="middle">下一条算子</text>
+        <text class="lf-s" x="430" y="204" text-anchor="middle">接口返回即入队完成</text>
+
+        <path class="lf-line" d="M308 227 C322 227 322 125 334 125" marker-end="url(#lfArrow)"/>
+        <path class="lf-line" d="M524 125 H548" marker-end="url(#lfArrow)"/>
+
+        <text class="lf-h" x="556" y="22">DEVICE · AIV 核阵列</text>
+
+        <g>
+          <rect class="lf-core on" x="556" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core on" x="586" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core on" x="616" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core on" x="646" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="40" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="40" width="24" height="24" rx="4"/>
+
+          <rect class="lf-core on" x="556" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core on" x="586" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="616" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="646" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="70" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="70" width="24" height="24" rx="4"/>
+
+          <rect class="lf-core" x="556" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="586" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="616" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="646" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="100" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="100" width="24" height="24" rx="4"/>
+
+          <rect class="lf-core" x="556" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="586" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="616" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="646" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="130" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="130" width="24" height="24" rx="4"/>
+
+          <rect class="lf-core" x="556" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="586" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="616" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="646" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="160" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="160" width="24" height="24" rx="4"/>
+
+          <rect class="lf-core" x="556" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="586" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="616" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="646" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="676" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="706" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="736" y="190" width="24" height="24" rx="4"/>
+          <rect class="lf-core" x="766" y="190" width="24" height="24" rx="4"/>
+        </g>
+        <text class="lf-note" x="556" y="230">8 × 6 = 48（A3）　·　8 × 8 = 64（A5）</text>
+        <text class="lf-note" x="556" y="246">深色核 = 已分配任务</text>
+
+        <text class="lf-note" x="806" y="46">size ≥ 核数</text>
+        <text class="lf-key" x="806" y="66">K/V 配对</text>
+        <text class="lf-note" x="806" y="84">核 i 取组 i, i+n, …</text>
+        <text class="lf-note" x="806" y="102">K、V 连续装入 UB</text>
+        <text class="lf-note" x="806" y="120">双缓冲重叠</text>
+
+        <text class="lf-note" x="806" y="156">size &lt; 核数</text>
+        <text class="lf-key" x="806" y="176">字节均分</text>
+        <text class="lf-note" x="806" y="194">单段可跨核切分</text>
+        <text class="lf-note" x="806" y="212">176 KB 分块循环</text>
+
+        <path class="lf-line" d="M782 214 V266" marker-end="url(#lfArrow)"/>
+        <text class="lf-note" x="556" y="262">UB（GM → UB → GM）</text>
+        <rect class="lf-box" x="556" y="270" width="234" height="26" rx="6"/>
+        <rect class="lf-hot" x="556" y="270" width="112" height="26" rx="6"/>
+        <text class="lf-s" x="612" y="287" text-anchor="middle">K</text>
+        <text class="lf-s" x="727" y="287" text-anchor="middle">V</text>
+        <text class="lf-note" x="806" y="287">88 KB × 2</text>
+        <text class="lf-note" x="20" y="300">host 侧只做提交；AIV 核在 device 上完成取数、切分与搬运</text>
+      </svg>
+    </figure>
+
+    <div class="grid g2 reveal">
+      <article class="card">
+        <h3>ACL 与 Launch 的关键约束</h3>
+        <ul class="cmp">
+          <li>复用调用方 stream：与前后 torch_npu 算子同流保序，库内不建流、不做同步。</li>
+          <li>blockDim 固定为 AIV 核数（A3 48 / A5 64）：无论多少段，只占一个 launch 槽位。</li>
+          <li>接口只传 4 个 device 指针：任务数由 kernel 从 device 内存读取，host 不传标量，图捕获回放时无需重算参数。</li>
+          <li>算子包与主库解耦：A3 / A5 分别构建，符号缺失只降级该接口。</li>
+          <li>返回即入队完成：等待由调用方 stream 同步或后续算子依赖保证。</li>
         </ul>
-      </div>
-      <aside class="code-detail" id="codeDetail" aria-live="polite"></aside>
-    </div>
-
-    <div class="grid g3" style="margin-top:18px">
-      <article class="card reveal">
-        <h3>语义层与核心层</h3>
-        <p><span class="kbd">smem_bm</span> 管理池化与 GVA 拷贝，<span class="kbd">smem_trans</span> 处理已注册内存的点对点传输，
-        <span class="kbd">smem_shm</span> 提供同机算子共享。三者复用 hybm 的地址、建链与算子。</p>
       </article>
-      <article class="card blue reveal">
-        <h3>南向扩展点</h3>
-        <p>新增链路需实现 <span class="kbd">TransportManager</span>（信息交换、连接、可达性）与
-        <span class="kbd">DataOperator</span>（按描述符搬运）。上层按优先级与 tag 选择，不感知具体协议。</p>
-      </article>
-      <article class="card gold reveal">
-        <h3>控制面实现</h3>
-        <p>Config Store 抽象 KV、Watch、CAS 与选主能力。TCP 模式无外部依赖，rank0 兼任服务端；etcd 模式提供租约与 HA，
-        通过 Go 共享库接入。</p>
+      <article class="card blue">
+        <h3>AIV 核内的两条分支</h3>
+        <ul class="cmp">
+          <li><b>size ≥ 核数</b>：前 <code>size/2</code> 组为 K、其余为 V；核 i 从组 i 开始，每次加核数取下一组。</li>
+          <li>该分支使用深度 2 的 <code>TQueBind(VECIN→VECOUT)</code>，每块 88 KB：下一组 CopyIn 与当前组 CopyOut 重叠。</li>
+          <li><b>size &lt; 核数</b>：总字节按核数均分，余数给前几个核；每核只处理与自己区间相交的段。</li>
+          <li>该分支单缓冲深度 1、176 KB，按 176 KB 分块循环，适用于段少而单段大的场景。</li>
+          <li>两条分支都用 <code>DataCopyPad</code> 处理任意字节长度，段间无需连续、等长或同序。</li>
+        </ul>
       </article>
     </div>
   </section>
@@ -1468,7 +1629,7 @@
   <!-- PERF -->
   <section id="perf">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">10</span> PERFORMANCE</div>
+      <div class="eyebrow"><span class="num">09</span> PERFORMANCE</div>
       <h2>实测带宽</h2>
       <p class="lead">
         昇腾 A3 超节点、UB 1.0、单 DIE + 单 CPU，单次拷贝 1–2 GB。跨机 DRAM 方向受主机内存与链路共同约束，
@@ -1492,7 +1653,7 @@
   <!-- BUILD -->
   <section id="build">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">11</span> BUILD &amp; VERIFY</div>
+      <div class="eyebrow"><span class="num">10</span> BUILD &amp; VERIFY</div>
       <h2>构建、运行与验证</h2>
       <p class="lead">
         默认通过 wrapper 脚本完成 RELEASE 构建、打包与运行准备；单元测试启用覆盖率与 ASAN。
@@ -1640,7 +1801,7 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
           const b = nodes[j];
           const d = Math.hypot(a.x - b.x, a.y - b.y);
           if (d < 155) {
-            ctx.strokeStyle = 'rgba(76,184,255,' + ((1 - d / 155) * 0.18).toFixed(3) + ')';
+            ctx.strokeStyle = 'rgba(26,115,201,' + ((1 - d / 155) * 0.26).toFixed(3) + ')';
             ctx.lineWidth = 1;
             ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
           }
@@ -1648,7 +1809,7 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
       }
       nodes.forEach(n => {
         const pulse = 0.52 + Math.sin(t / 850 + n.p) * 0.34;
-        ctx.fillStyle = 'rgba(60,230,168,' + (0.3 + pulse * 0.4).toFixed(3) + ')';
+        ctx.fillStyle = 'rgba(14,154,112,' + (0.3 + pulse * 0.4).toFixed(3) + ')';
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.fill();
         if (!reduce) {
           n.x += n.vx; n.y += n.vy;
@@ -1667,107 +1828,6 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
       es.forEach(e => { visible = e.isIntersecting; if (visible && !reduce) start(); else stop(); });
     }, { threshold: 0.02 }).observe(canvas);
   }
-
-  /* ---------------- architecture ---------------- */
-  const ARCH = {
-    app: {
-      tag: 'L4 · CONSUMERS', title: '应用与示例层',
-      stats: '官方应用 · 样例 · 基准测试',
-      desc: '直接使用内存池化能力，覆盖推理、KV Cache 卸载与跨机数据交换，同时作为 API 语义与性能的回归载体。',
-      list: [
-        'ZBAL：面向昇腾集群的集合通信与内存池化应用。',
-        'TensorRTL：推荐 / 大模型场景的分布式推理实践。',
-        'examples：最小可运行样例，覆盖 BM、TRANS、SHM 与 Offload。',
-        'benchmark：带宽、时延与扩展性测试，README 数据来源。'
-      ],
-      files: [['app/zbal/', 'ZBAL'], ['app/tensorRTL/', 'TensorRTL'], ['examples/', 'examples'], ['README.md', 'README']]
-    },
-    smem: {
-      tag: 'L3 · libmf_smem.so', title: '语义与接口层 · smem',
-      stats: '102 files · 28,371 lines',
-      desc: '将四类业务语义翻译为 hybm 的统一模型，负责句柄、生命周期、参数校验、错误码与 Python 绑定，不实现数据搬运。',
-      list: [
-        'smem_bm：大容量池化。create / join / copy / free，导出 GVA 句柄。',
-        'smem_trans：注册内存的点对点传输，面向已有 buffer 的零拷贝交换。',
-        'smem_shm：同机共享内存，供算子级直接访问。',
-        'config_store / group_manager：控制面成员管理、KV 与状态机。',
-        'python_wrapper：pybind11 绑定，导出 memfabric_hybrid 包。'
-      ],
-      files: [
-        ['src/smem/csrc/smem_bm/smem_bm.cpp', 'smem_bm.cpp'],
-        ['src/smem/csrc/smem_bm/smem_bm_entry.cpp', 'smem_bm_entry.cpp'],
-        ['src/smem/csrc/smem_bm/smem_bm_entry_manager.cpp', 'entry_manager.cpp'],
-        ['src/smem/csrc/config_store/tcp_store/smem_group_manager_server.h', 'group_manager_server.h'],
-        ['src/smem/python/memfabric_hybrid/memfabric_hybrid/__init__.py', 'python __init__.py']
-      ]
-    },
-    hybm: {
-      tag: 'L2 · libmf_hybm_core.so', title: '内存与传输核心 · hybm',
-      stats: '169 files · 47,547 lines',
-      desc: '实现全局地址空间、内存段、Exchange Info、导入映射、传输连接与数据算子。',
-      list: [
-        'entity：MemEntity 抽象与 MemEntityDefault 实现，持有 HBM/DRAM 段与算子。',
-        'mm：GVA/DVA/HVA 三张地址表，12 种拷贝方向与地址分类。',
-        'transport：HCOM / HCCP(RDMA) / SDMA / COMPOSE 四种管理器的创建与建链。',
-        'data_operation：按 (srcRank,dstRank) 分组、按优先级编排与降级。',
-        'under_api / driver：ACL、HAL、HCCP、HCOM 等底层接口封装。'
-      ],
-      files: [
-        ['src/hybm/csrc/entity/hybm_entity.h', 'hybm_entity.h'],
-        ['src/hybm/csrc/entity/hybm_entity_default.h', 'entity_default.h'],
-        ['src/hybm/csrc/mm/hybm_va_manager.h', 'hybm_va_manager.h'],
-        ['src/hybm/csrc/common/hybm_define.h', 'hybm_define.h'],
-        ['src/hybm/csrc/transport/protocol/hybm_transport_manager.h', 'transport_manager.h'],
-        ['src/hybm/csrc/data_operation/host/hybm_compose_data_op.cpp', 'compose_data_op.cpp']
-      ]
-    },
-    infra: {
-      tag: 'L1 · CROSS-CUTTING', title: '控制面与基础设施',
-      stats: 'config store · acc_links · ptracer',
-      desc: '负责进程互发现、元数据交换与建链，并提供 TLS、HA、日志与性能打点；向数据面只暴露状态就绪信号。',
-      list: [
-        'TcpConfigStore：零外部依赖，rank0 兼任服务端，其他 rank 为客户端。',
-        'etcd backend：Go 共享库，提供租约选主、watch 与 leader 变更回调。',
-        'GroupManager：rank 生命周期与有向链路状态机，超时重试与断链恢复。',
-        'acc_links：TCP/HTTP 控制通道、TLS 与连接管理。',
-        'ptracer：关键路径打点与性能统计。'
-      ],
-      files: [
-        ['src/smem/csrc/config_store/tcp_store/smem_tcp_config_store.h', 'tcp_config_store.h'],
-        ['src/smem/csrc/config_store/tcp_store/smem_group_manager_server.h', 'group_manager_server.h'],
-        ['src/util/etcd_client/etcd_store_backend/', 'etcd backend'],
-        ['src/acc_links/', 'acc_links'],
-        ['docs/zh/etcd_store_backend.md', 'etcd docs']
-      ]
-    }
-  };
-
-  function fileLink(p, label) {
-    return '<a href="file:///home/qiuruiqi/prj/memfabric_hybrid/' + p + '" title="' + p + '">' + label + '</a>';
-  }
-
-  function renderArch(key) {
-    const d = ARCH[key];
-    if (!d) return;
-    const box = $('#archDetail');
-    if (!box) return;
-    box.innerHTML =
-      '<span class="chip">' + d.tag + '</span>' +
-      '<h3>' + d.title + '</h3>' +
-      '<div class="detail-stats">' + d.stats + '</div>' +
-      '<p>' + d.desc + '</p>' +
-      '<ul class="detail-list">' + d.list.map(x => '<li>' + x + '</li>').join('') + '</ul>' +
-      '<div class="file-links">' + d.files.map(f => fileLink(f[0], f[1])).join('') + '</div>';
-  }
-
-  $$('#archStack .layer').forEach(layer => {
-    layer.addEventListener('click', () => {
-      $$('#archStack .layer').forEach(x => x.classList.remove('active'));
-      layer.classList.add('active');
-      renderArch(layer.dataset.layer);
-    });
-  });
-  renderArch('app');
 
   /* ---------------- GVA ---------------- */
   const GVA_BASE = 0x280040000000n;
@@ -1997,7 +2057,7 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
     let s = '<defs>';
     const mk = (id, color) => '<marker id="' + id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ' +
       'markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="' + color + '"/></marker>';
-    s += mk('arReq', '#4cb8ff') + mk('arRet', '#7fa6cf') + mk('arAsync', '#8b7cff') + mk('arSelf', '#3ce6a8');
+    s += mk('arReq', '#1a73c9') + mk('arRet', '#2f6f9e') + mk('arAsync', '#5b4fd6') + mk('arSelf', '#0b7d59');
     s += '</defs>';
 
     [[0, 4, 'INIT'], [4, 9, 'CREATE / JOIN'], [9, 20, 'MESH'], [20, 22, 'DATA']].forEach((b, i) => {
@@ -2064,8 +2124,8 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
     const mk = (id, color) => '<marker id="' + id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" ' +
       'markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="' + color + '"/></marker>';
 
-    let s = '<defs>' + mk(pre + 'Req', '#4cb8ff') + mk(pre + 'Ret', '#7fa6cf') +
-      mk(pre + 'Async', '#8b7cff') + mk(pre + 'Self', '#3ce6a8') + '</defs>';
+    let s = '<defs>' + mk(pre + 'Req', '#1a73c9') + mk(pre + 'Ret', '#2f6f9e') +
+      mk(pre + 'Async', '#5b4fd6') + mk(pre + 'Self', '#0b7d59') + '</defs>';
 
     (cfg.phases || []).forEach((b, i) => {
       const y = TOP - 20 + b[0] * GAP;
@@ -2346,7 +2406,7 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
     }
     addBar('b', 760, 800, 420, 13);
 
-    s += '<line id="cmpPh" x1="' + AX0 + '" y1="52" x2="' + AX0 + '" y2="432" stroke="rgba(60,230,168,.65)"' +
+    s += '<line id="cmpPh" x1="' + AX0 + '" y1="52" x2="' + AX0 + '" y2="432" stroke="rgba(14,154,112,.65)"' +
       ' stroke-width="1.5" stroke-dasharray="4 4" opacity="0"/>';
     cmpSvg.innerHTML = s;
 
@@ -2593,6 +2653,10 @@ python -c "import memfabric_hybrid as mf; print(mf.__version__)"</code></div>
       ]
     }
   };
+
+  function fileLink(p, label) {
+    return '<a href="file:///home/qiuruiqi/prj/memfabric_hybrid/' + p + '" title="' + p + '">' + label + '</a>';
+  }
 
   function renderCode(key) {
     const d = CODE[key];
