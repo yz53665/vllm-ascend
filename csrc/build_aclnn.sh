@@ -233,6 +233,8 @@ elif [[ "$SOC_VERSION" =~ ^ascend950 ]]; then
         "k2q_csr"
         "sparse_attention_score"
         "msa_index_score"
+        "fused_lightning_indexer_manage"
+        "fused_scatter_copy_sparse_flash_attention"
     )
 
     CUSTOM_OPS=$(IFS=';'; echo "${CUSTOM_OPS_ARRAY[*]}")

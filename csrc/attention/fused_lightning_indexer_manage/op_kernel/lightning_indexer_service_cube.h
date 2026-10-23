@@ -40,6 +40,10 @@ public:
     __aicore__ inline void ComputeMm1(const LICommon::RunInfo &runInfo);
 
     static constexpr IsResetLoad3dConfig LOAD3DV2_CONFIG = {true, true}; // isSetFMatrix isSetPadding;
+#if (__CCE_AICORE__ == 310)
+    // ROW_MAJOR: 使能 NZ2ND，输出 ND 格式；false: 目的地址不在 UB（GM）
+    static constexpr FixpipeConfig LI_CFG_ROW_MAJOR_GM = {CO2Layout::ROW_MAJOR, false};
+#endif
     static constexpr uint64_t KEY_BUF_NUM = 3;
     static constexpr uint64_t QUERY_BUF_NUM = 2;
     static constexpr uint64_t L0_BUF_NUM = 2;
@@ -303,6 +307,20 @@ template <typename LIT>
 __aicore__ inline void LIMatmul<LIT>::LoadQueryToL0a(uint64_t s1gGmOffset, uint64_t s1gL1Offset, uint64_t s1gL1RealSize,
                                                      uint64_t s1gL0RealSize, const LICommon::RunInfo &runInfo)
 {
+#if (__CCE_AICORE__ == 310)
+    // DAV_3510: 3D 卷积式装载在 A5 上改用 LoadData2DParamsV2。源 L1 为 [K1][S1g][16] 的 NZ，
+    // 单位换算：mStep/mStartPosition=16 元素，kStep=32B，srcStride/dstStride=512B(分形)。
+    LoadData2DParamsV2 loadData2DParamsV2;
+    loadData2DParamsV2.mStartPosition = CeilDiv(s1gL1Offset, BLOCK_CUBE);
+    loadData2DParamsV2.kStartPosition = 0;
+    loadData2DParamsV2.mStep = CeilDiv(s1gL0RealSize, BLOCK_CUBE);
+    loadData2DParamsV2.kStep = CeilDiv(constInfo_.headDim * sizeof(Q_T), 32);
+    loadData2DParamsV2.srcStride = CeilDiv(s1gL1RealSize, BLOCK_CUBE);
+    loadData2DParamsV2.dstStride = CeilDiv(s1gL0RealSize, BLOCK_CUBE);
+    loadData2DParamsV2.ifTranspose = false;
+    LoadData(queryL0_[(l0BufIdx_ % L0_BUF_NUM) * L0AB_BUFFER_OFFSET],
+             queryL1_[(queryL1Mte1BufIdx_ % QUERY_BUF_NUM) * QUERY_BUFFER_OFFSET], loadData2DParamsV2);
+#else
     LoadData3DParamsV2<Q_T> loadData3DParams;
     // SetFmatrixParams
     loadData3DParams.l1H = CeilDiv(s1gL1RealSize, BLOCK_CUBE); // Hin=M1=8
@@ -333,6 +351,7 @@ __aicore__ inline void LIMatmul<LIT>::LoadQueryToL0a(uint64_t s1gGmOffset, uint6
     LoadData<Q_T, LOAD3DV2_CONFIG>(queryL0_[(l0BufIdx_ % L0_BUF_NUM) * L0AB_BUFFER_OFFSET],
                                    queryL1_[(queryL1Mte1BufIdx_ % QUERY_BUF_NUM) * QUERY_BUFFER_OFFSET],
                                    loadData3DParams);
+#endif
 }
 
 template <typename LIT>
@@ -340,6 +359,23 @@ __aicore__ inline void LIMatmul<LIT>::LoadKeyToL0b(uint64_t s2L1Offset, uint64_t
                                                    const LICommon::RunInfo &runInfo)
 {
     uint64_t keyL1Offset = s2L1Offset >= S2_BASIC_BLOCK_L0 ? S2_BASIC_BLOCK_L0 * D_BASIC_BLOCK_L0 : 0;
+#if (__CCE_AICORE__ == 310)
+    // DAV_3510: 改用 LoadData2DParamsV2。KeyNd2Nz 按两个 L0 分形排布 L1，
+    // 每个分形的源行数为 min(s2L1RealSize, S2_BASIC_BLOCK_L0)，srcStride 以该行数换算。
+    uint64_t keyL1RowSize = s2L1RealSize > S2_BASIC_BLOCK_L0 ?
+                                S2_BASIC_BLOCK_L0 :
+                                CeilAlign(s2L1RealSize, static_cast<uint64_t>(BLOCK_CUBE));
+    LoadData2DParamsV2 loadData2DParamsV2;
+    loadData2DParamsV2.mStartPosition = 0;
+    loadData2DParamsV2.kStartPosition = 0;
+    loadData2DParamsV2.mStep = CeilDiv(s2L0RealSize, BLOCK_CUBE);
+    loadData2DParamsV2.kStep = CeilDiv(constInfo_.headDim * sizeof(K_T), 32);
+    loadData2DParamsV2.srcStride = CeilDiv(keyL1RowSize, BLOCK_CUBE);
+    loadData2DParamsV2.dstStride = CeilDiv(s2L0RealSize, BLOCK_CUBE);
+    loadData2DParamsV2.ifTranspose = false;
+    LoadData(keyL0_[(l0BufIdx_ % L0_BUF_NUM) * L0AB_BUFFER_OFFSET],
+             keyL1_[(keyL1BufIdx_ % KEY_BUF_NUM) * KEY_BUFFER_OFFSET + keyL1Offset], loadData2DParamsV2);
+#else
     LoadData2DParams loadData2DParams;
     loadData2DParams.startIndex = 0;
     loadData2DParams.repeatTimes = CeilDiv(s2L0RealSize, BLOCK_CUBE) * CeilDiv(constInfo_.headDim, BLOCK_CUBE);
@@ -348,6 +384,7 @@ __aicore__ inline void LIMatmul<LIT>::LoadKeyToL0b(uint64_t s2L1Offset, uint64_t
     loadData2DParams.ifTranspose = false;
     LoadData(keyL0_[(l0BufIdx_ % L0_BUF_NUM) * L0AB_BUFFER_OFFSET],
              keyL1_[(keyL1BufIdx_ % KEY_BUF_NUM) * KEY_BUFFER_OFFSET + keyL1Offset], loadData2DParams);
+#endif
 }
 
 template <typename LIT>
@@ -372,6 +409,26 @@ template <typename LIT>
 __aicore__ inline void LIMatmul<LIT>::Fixp(uint64_t s1gGmOffset, uint64_t s2GmOffset, uint64_t s1gL0RealSize,
                                            uint64_t s2L0RealSize, const LICommon::RunInfo &runInfo)
 {
+    uint64_t gmOffset = (runInfo.loop % 2) * constInfo_.mBaseSize * constInfo_.s2BaseSize +
+                        s1gGmOffset * runInfo.actualSingleProcessSInnerSizeAlign + s2GmOffset;
+    uint64_t l0cOffset = (l0BufIdx_ % L0_BUF_NUM) * L0C_BUFFER_OFFSET;
+#if (__CCE_AICORE__ == 310)
+    // DAV_3510: DataCopyCO12DstParams + SetFixpipeNz2ndFlag 的全局配置已废弃，
+    // 改用 FixpipeParamsC310<ROW_MAJOR> + Fixpipe 完成 L0C→GM 的 NZ2ND 回写。
+    // nSize 按 16 元素对齐；多写出的尾部脏数据落在 vector 侧 mask 剔除的区间内。
+    FixpipeParamsC310<CO2Layout::ROW_MAJOR> fixpipeParams;
+    fixpipeParams.mSize = CeilAlign(s1gL0RealSize, BLOCK_CUBE);
+    fixpipeParams.nSize = CeilAlign(s2L0RealSize, static_cast<uint64_t>(BLOCK_CUBE));
+    fixpipeParams.srcStride = CeilAlign(s1gL0RealSize, BLOCK_CUBE);
+    fixpipeParams.dstStride = runInfo.actualSingleProcessSInnerSizeAlign;
+    fixpipeParams.quantPre = QuantMode_t::NoQuant;
+    fixpipeParams.reluEn = true;
+    fixpipeParams.unitFlag = 0b11; // 3 unitflag，须与 Mmad 的 unitFlag 一致
+    fixpipeParams.params.ndNum = 1;
+    fixpipeParams.params.srcNdStride = 0;
+    fixpipeParams.params.dstNdStride = 0;
+    Fixpipe<float, float, LI_CFG_ROW_MAJOR_GM>(mm1ResGm_[gmOffset], cL0_[l0cOffset], fixpipeParams);
+#else
     AscendC::DataCopyCO12DstParams intriParams;
     intriParams.mSize = CeilAlign(s1gL0RealSize, BLOCK_CUBE);
     intriParams.nSize = s2L0RealSize;
@@ -383,9 +440,8 @@ __aicore__ inline void LIMatmul<LIT>::Fixp(uint64_t s1gGmOffset, uint64_t s2GmOf
     intriParams.unitFlag = 0b11; // 3 unitflag
     intriParams.reluPre = 1;
     AscendC::SetFixpipeNz2ndFlag(1, 1, 1);
-    AscendC::DataCopy(mm1ResGm_[(runInfo.loop % 2) * constInfo_.mBaseSize * constInfo_.s2BaseSize +
-                                s1gGmOffset * intriParams.dstStride + s2GmOffset],
-                      cL0_[(l0BufIdx_ % L0_BUF_NUM) * L0C_BUFFER_OFFSET], intriParams);
+    AscendC::DataCopy(mm1ResGm_[gmOffset], cL0_[l0cOffset], intriParams);
+#endif
 }
 
 template <typename LIT>

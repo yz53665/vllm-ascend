@@ -30,7 +30,8 @@ ge::graphStatus FusedLightningIndexerManageTiling::GetNpuInfo(FusedLightningInde
 
     tilingInfo.socVersion = ascendcPlatform.GetSocVersion();
     OPS_ERR_IF((tilingInfo.socVersion != platform_ascendc::SocVersion::ASCEND910B) &&
-                   (tilingInfo.socVersion != platform_ascendc::SocVersion::ASCEND910_93),
+                   (tilingInfo.socVersion != platform_ascendc::SocVersion::ASCEND910_93) &&
+                   (tilingInfo.socVersion != platform_ascendc::SocVersion::ASCEND950),
                OPS_LOG_E(tilingInfo.opName, "SOC Version[%d] is not supported.",
                          static_cast<int32_t>(tilingInfo.socVersion)),
                return ge::GRAPH_FAILED);

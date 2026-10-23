@@ -428,6 +428,19 @@ __aicore__ inline void SFAMatmulService<SFAT>::LoadDataMm1A(LocalTensor<KV_T> &a
                                                                    uint32_t kSplitSize, uint32_t mSize, uint32_t kSize)
 {
     LocalTensor<KV_T> srcTensor = aL1Tensor[mSize * kSplitSize * idx];
+#if (__CCE_AICORE__ == 310)
+    // DAV_3510: L1->L0A 改用 LoadData2DParamsV2（等价于 fa_base_matmul::LoadDataToL0A 的 MK 分支）。
+    // 源 L1 为 [K1][M][16] 的 NZ，单位：mStep=16 元素、kStep=32B、src/dstStride=512B(分形)。
+    LoadData2DParamsV2 loadData2DParams;
+    loadData2DParams.mStartPosition = 0;
+    loadData2DParams.kStartPosition = 0;
+    loadData2DParams.mStep = SFAAlign(mSize, 16U) / 16U;
+    loadData2DParams.kStep = SFAAlign(static_cast<uint32_t>(kSize) * static_cast<uint32_t>(sizeof(KV_T)), 32U) / 32U;
+    loadData2DParams.srcStride = SFAAlign(mSize, 16U) / 16U;
+    loadData2DParams.dstStride = SFAAlign(mSize, 16U) / 16U;
+    loadData2DParams.ifTranspose = false;
+    LoadData(aL0Tensor, srcTensor, loadData2DParams);
+#else
     LoadData3DParamsV2<KV_T> loadData3DParams;
     // SetFmatrixParams
     loadData3DParams.l1H = mSize / 16; // Hin=M1=8
@@ -454,6 +467,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::LoadDataMm1A(LocalTensor<KV_T> &a
     loadData3DParams.fMatrixCtrl = 0;
     loadData3DParams.channelSize = kSize; // Cin=K
     LoadData<KV_T, LOAD3DV2_CONFIG>(aL0Tensor, srcTensor, loadData3DParams);
+#endif
 }
 
 template <typename SFAT>
@@ -463,6 +477,19 @@ __aicore__ inline void SFAMatmulService<SFAT>::LoadDataMm1B(LocalTensor<KV_T> &l
 {
     LocalTensor<KV_T> srcTensor = l1Tensor[nSize * kSplitSize * idx];
 
+#if (__CCE_AICORE__ == 310)
+    // DAV_3510: 旧的 repeatTimes 版 LoadData2DParams 改写为 LoadData2DParamsV2
+    // （等价于 fa_base_matmul::LoadDataToL0B 的 NK 分支）。
+    LoadData2DParamsV2 loadData2DParams;
+    loadData2DParams.mStartPosition = 0;
+    loadData2DParams.kStartPosition = 0;
+    loadData2DParams.mStep = SFAAlign(nSize, 16U) / 16U;
+    loadData2DParams.kStep = SFAAlign(static_cast<uint32_t>(kSize) * static_cast<uint32_t>(sizeof(KV_T)), 32U) / 32U;
+    loadData2DParams.srcStride = SFAAlign(nSize, 16U) / 16U;
+    loadData2DParams.dstStride = SFAAlign(nSize, 16U) / 16U;
+    loadData2DParams.ifTranspose = false;
+    LoadData(l0Tensor, srcTensor, loadData2DParams);
+#else
     LoadData2DParams loadData2DParams;
     loadData2DParams.startIndex = 0;
     loadData2DParams.repeatTimes = (nSize + 15) / 16 * kSize / (32 / sizeof(KV_T));
@@ -470,6 +497,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::LoadDataMm1B(LocalTensor<KV_T> &l
     loadData2DParams.dstGap = 0;
     loadData2DParams.ifTranspose = false;
     LoadData(l0Tensor, srcTensor, loadData2DParams);
+#endif
 }
 
 template <typename SFAT>
@@ -976,6 +1004,21 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm2(const RunInfo &info, c
                     }
                     WaitFlag<HardEvent::M_MTE1>(Mte1MmABEventId(abL0BufIter % 2));
                     LocalTensor<KV_T> bL0Tensor = bL0TensorPingPong[(abL0BufIter % 2) * (L0B_PP_SIZE / sizeof(KV_T))];
+#if (__CCE_AICORE__ == 310)
+                    // DAV_3510: B（KN 布局）装载改用 LoadData2DParamsV2 并显式转置，
+                    // 等价于 fa_base_matmul::LoadDataToL0B 的 KN 分支。
+                    // 若 Stage 4 精度异常，优先复核此处的 srcStride/dstStride 口径。
+                    LoadData2DParamsV2 loadData2DParamsForB;
+                    loadData2DParamsForB.mStartPosition = 0;
+                    loadData2DParamsForB.kStartPosition = 0;
+                    loadData2DParamsForB.mStep = SFAAlign(kL0SizeAlign, 16U) / 16U;
+                    loadData2DParamsForB.kStep =
+                        SFAAlign(nL1SizeAlign * static_cast<uint32_t>(sizeof(KV_T)), 32U) / 32U;
+                    loadData2DParamsForB.srcStride = SFAAlign(kL0SizeAlign, 16U) / 16U;
+                    loadData2DParamsForB.dstStride = SFAAlign(nL1SizeAlign, 16U) / 16U;
+                    loadData2DParamsForB.ifTranspose = true;
+                    LoadData(bL0Tensor, bL1Tensor[kL0 * baseK * baseN], loadData2DParamsForB);
+#else
                     LoadData3DParamsV2<KV_T> loadData3DParamsForB;
                     loadData3DParamsForB.l1H = kL0SizeAlign / 16;
                     loadData3DParamsForB.l1W = 16;
@@ -1000,8 +1043,23 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm2(const RunInfo &info, c
                     loadData3DParamsForB.fMatrixCtrl = 0;
                     loadData3DParamsForB.channelSize = nL1SizeAlign;
                     LoadData<KV_T, LOAD3DV2_CONFIG>(bL0Tensor, bL1Tensor[kL0 * baseK * baseN], loadData3DParamsForB);
+#endif
 
                     LocalTensor<KV_T> aL0Tensor = aL0TensorPingPong[(abL0BufIter % 2) * (L0A_PP_SIZE / sizeof(KV_T))];
+#if (__CCE_AICORE__ == 310)
+                    // DAV_3510: A（MK 布局）装载改用 LoadData2DParamsV2，
+                    // 等价于 fa_base_matmul::LoadDataToL0A 的 MK 分支。
+                    LoadData2DParamsV2 loadData2DParamsForA;
+                    loadData2DParamsForA.mStartPosition = 0;
+                    loadData2DParamsForA.kStartPosition = 0;
+                    loadData2DParamsForA.mStep = SFAAlign(mL1SizeAlign, 16U) / 16U;
+                    loadData2DParamsForA.kStep =
+                        SFAAlign(kL0SizeAlign * static_cast<uint32_t>(sizeof(KV_T)), 32U) / 32U;
+                    loadData2DParamsForA.srcStride = SFAAlign(mL1SizeAlign, 16U) / 16U;
+                    loadData2DParamsForA.dstStride = SFAAlign(mL1SizeAlign, 16U) / 16U;
+                    loadData2DParamsForA.ifTranspose = false;
+                    LoadData(aL0Tensor, aL1Tensor[kL0 * baseK * mL1SizeAlign], loadData2DParamsForA);
+#else
                     LoadData3DParamsV2<KV_T> loadData3DParamsForA;
                     loadData3DParamsForA.l1H = mL1SizeAlign / 16;
                     loadData3DParamsForA.l1W = 16;
@@ -1027,6 +1085,7 @@ __aicore__ inline void SFAMatmulService<SFAT>::ComputeMm2(const RunInfo &info, c
                     loadData3DParamsForA.channelSize = kL0SizeAlign;
                     LoadData<KV_T, LOAD3DV2_CONFIG>(aL0Tensor, aL1Tensor[kL0 * baseK * mL1SizeAlign],
                                                     loadData3DParamsForA);
+#endif
                     SetFlag<HardEvent::MTE1_M>(Mte1MmABEventId(abL0BufIter % 2));
                     WaitFlag<HardEvent::MTE1_M>(Mte1MmABEventId(abL0BufIter % 2));
 

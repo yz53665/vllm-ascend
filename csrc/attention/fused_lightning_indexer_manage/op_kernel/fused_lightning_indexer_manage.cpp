@@ -316,7 +316,7 @@ __global__ __aicore__ void fused_lightning_indexer_manage(
     __gm__ uint8_t *cacheSlotsOut, __gm__ uint8_t *workspace,
     __gm__ uint8_t *tiling)
 {
-#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__) || (__CCE_AICORE__ == 200)
+#if (defined __DAV_310R6__) || (__CCE_AICORE__ == 200)
 #else
     TPipe tPipe;
     (void)queryDequantScale;
