@@ -548,10 +548,10 @@
     <a href="#overview" class="active">概览</a>
     <a href="#code">代码结构</a>
     <a href="#gva">统一编址</a>
-    <a href="#dataplane">数据面</a>
     <a href="#control">组网与时序</a>
     <a href="#statemachine">状态机</a>
     <a href="#dispatch">拷贝调度</a>
+    <a href="#dataplane">数据面</a>
     <a href="#offload">Offload</a>
     <a href="#perf">性能</a>
     <a href="#build">构建验证</a>
@@ -929,143 +929,10 @@
     </div>
   </section>
 
-  <!-- DATA PLANE -->
-  <section id="dataplane">
-    <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">04</span> DATA PLANE</div>
-      <h2>数据面访问路径</h2>
-      <p class="lead">
-        D 表示 Device（HBM），RH 表示 Remote Host（跨机 DRAM），H 表示本机 DRAM。选择方向后，图中显示数据经过的内存与互联节点，
-        右侧给出该方向使用的引擎与实测带宽。
-      </p>
-    </div>
-
-    <div class="dp-wrap reveal">
-      <div class="dp-stage">
-        <svg class="dp-svg" viewBox="0 0 1000 420" role="img" aria-label="跨节点内存访问路径示意图">
-          <rect class="box" x="24" y="30" width="350" height="350" rx="20"/>
-          <text class="title" x="48" y="62">节点 A · rank 0</text>
-          <g id="node-hbmA">
-            <rect class="hbm" x="48" y="82" width="302" height="92" rx="12"/>
-            <text class="label" x="64" y="110">HBM · Device VA</text>
-            <text class="muted-t" x="64" y="132">0x1000_0000_0000 起</text>
-            <text class="muted-t" x="64" y="151">窗口 = maxHbmSize</text>
-          </g>
-          <rect class="nic" x="48" y="196" width="302" height="44" rx="10"/>
-          <text class="muted-t" x="64" y="223">NIC / UB / RoCE</text>
-          <g id="node-dramA">
-            <rect class="dram" x="48" y="262" width="302" height="92" rx="12"/>
-            <text class="label" x="64" y="290">DRAM · GVM 窗口</text>
-            <text class="muted-t" x="64" y="312">0x2800_4000_0000 起</text>
-            <text class="muted-t" x="64" y="331">窗口 = maxDramSize</text>
-          </g>
-
-          <rect class="box" x="626" y="30" width="350" height="350" rx="20"/>
-          <text class="title" x="650" y="62">节点 B · rank 1</text>
-          <g id="node-hbmB">
-            <rect class="hbm" x="650" y="82" width="302" height="92" rx="12"/>
-            <text class="label" x="666" y="110">HBM · Device VA</text>
-            <text class="muted-t" x="666" y="132">同一张 GVA 表</text>
-            <text class="muted-t" x="666" y="151">rank 1 窗口</text>
-          </g>
-          <rect class="nic" x="650" y="196" width="302" height="44" rx="10"/>
-          <text class="muted-t" x="666" y="223">NIC / UB / RoCE</text>
-          <g id="node-dramB">
-            <rect class="dram" x="650" y="262" width="302" height="92" rx="12"/>
-            <text class="label" x="666" y="290">DRAM · GVM 窗口</text>
-            <text class="muted-t" x="666" y="312">对端注册内存键</text>
-            <text class="muted-t" x="666" y="331">单边访问目标</text>
-          </g>
-
-          <rect class="netbox" x="404" y="146" width="192" height="128" rx="18"/>
-          <text class="label" x="500" y="190" text-anchor="middle">跨机互联</text>
-          <text class="muted-t" x="500" y="214" text-anchor="middle">UB / RoCE / TCP</text>
-          <text class="muted-t" x="500" y="236" text-anchor="middle">one-sided read / write</text>
-
-          <path id="dpFlowPath" class="flowline" d="M 230 128 C 470 70, 530 330, 700 308"/>
-          <circle id="dpGlow" r="13" fill="rgba(176,112,8,.16)"/>
-          <circle id="dpPacket" r="4.5" fill="#a86b06"/>
-          <text id="dpPathLabel" class="muted-t" x="500" y="398" text-anchor="middle">选择右侧的一种访问方向</text>
-        </svg>
-        <div class="legend">
-          <span><i style="background:rgba(14,154,112,.6)"></i>HBM / Device</span>
-          <span><i style="background:rgba(26,115,201,.6)"></i>DRAM / GVM</span>
-          <span><i style="background:rgba(91,79,214,.6)"></i>互联网络</span>
-          <span><i style="background:#a86b06"></i>数据包</span>
-        </div>
-      </div>
-
-      <aside class="dp-side">
-        <div class="dp-btns" id="dpBtns">
-          <button class="dp-btn" data-scen="local">L2G 本机 HBM → 全局</button>
-          <button class="dp-btn" data-scen="d2rh">D2RH 本机 HBM → 远端 DRAM</button>
-          <button class="dp-btn" data-scen="rh2d">RH2D 远端 DRAM → 本机 HBM</button>
-          <button class="dp-btn active" data-scen="d2d">RD2D 远端 HBM → 本机 HBM</button>
-          <button class="dp-btn" data-scen="h2h">H2H 远端 DRAM → 本机 DRAM</button>
-        </div>
-        <div class="dp-info">
-          <h3 id="dpTitle">RD2D · 远端 HBM 到本机 HBM</h3>
-          <div class="route" id="dpRoute">远端 rank 1 HBM → 本机 rank 0 HBM</div>
-          <p id="dpDesc">设备侧单边读：本机发起，按对端内存键直接读取远端 HBM，经 UB/RoCE 返回本机，再落盘到本地 HBM。</p>
-          <div class="dp-metrics">
-            <span class="metric">引擎 <b id="dpEngine">Device URMA / RDMA</b></span>
-            <span class="metric">实测 <b id="dpBw">166.47 GB/s</b></span>
-            <span class="metric">CPU <b>不参与</b></span>
-          </div>
-        </div>
-        <div class="note">
-          <span><b>单边语义：</b>数据面仅交换内存键与地址，远端不执行 recv，也不产生中断处理。
-          跨机拷贝的编程模型与本地 memcpy 一致，且不引入中转缓冲区。</span>
-        </div>
-      </aside>
-    </div>
-
-    <h3 class="sub-head reveal">L2G：本机 HBM 拷贝到全局地址</h3>
-    <p class="seq-lead reveal">
-      src 与 dst 均落在本 rank 的 HBM 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_DEVICE。调用链不经过传输层：
-      算子链中只有 SDMA，搬运在本地 stream 上完成，同步返回即表示数据对后续算子可见。
-    </p>
-    <div class="seq-wrap dp-seq reveal">
-      <div class="seq-bar">
-        <span class="step" id="l2gStep">0 / 14</span>
-        <button class="btn small" id="l2gPrev">上一步</button>
-        <button class="btn small primary" id="l2gPlay">播放</button>
-        <button class="btn small" id="l2gNext">下一步</button>
-        <button class="btn small" id="l2gReset">重置</button>
-      </div>
-      <div class="seq-scroll">
-        <svg class="seq-svg" id="l2gSvg" role="img" aria-label="L2G 本机 HBM 拷贝时序图"></svg>
-      </div>
-    </div>
-
-    <h3 class="sub-head reveal">D2RH：本机 HBM 单边写入远端 DRAM</h3>
-    <p class="seq-lead reveal">
-      dst 落在远端 rank 的 host 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_HOST。算子链选中 Device URMA：
-      本端提交写请求并等待完成事件，远端仅提供已注册的内存键与地址，CPU 不参与数据搬运。
-    </p>
-    <div class="seq-wrap dp-seq reveal">
-      <div class="seq-bar">
-        <span class="step" id="d2rhStep">0 / 17</span>
-        <button class="btn small" id="d2rhPrev">上一步</button>
-        <button class="btn small primary" id="d2rhPlay">播放</button>
-        <button class="btn small" id="d2rhNext">下一步</button>
-        <button class="btn small" id="d2rhReset">重置</button>
-      </div>
-      <div class="seq-scroll">
-        <svg class="seq-svg" id="d2rhSvg" role="img" aria-label="D2RH 本机 HBM 写入远端 DRAM 时序图"></svg>
-      </div>
-    </div>
-
-    <div class="note reveal">
-      <span><b>测试条件：</b>数据来自 README 的昇腾 A3 超节点测试（DRAM 与 HBM 池化，UB 1.0，单 DIE + 单 CPU，
-      单次 1–2 GB，1 GB/s = 1000³ B/s）。A2 服务器可通过 Device RoCE 获得同等的跨机访问能力，具体数值取决于硬件与拓扑。</span>
-    </div>
-  </section>
-
   <!-- CONTROL PLANE -->
   <section id="control">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">05</span> CONTROL PLANE</div>
+      <div class="eyebrow"><span class="num">04</span> CONTROL PLANE</div>
       <h2>BM 初始化、组网与拷贝时序</h2>
       <p class="lead">
         控制面完成三项工作：进程互发现（Config Store）、交换 Entity 与 Slice 元数据（Exchange Info）、
@@ -1232,7 +1099,7 @@
   <!-- STATE MACHINE -->
   <section id="statemachine">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">06</span> STATE MACHINE</div>
+      <div class="eyebrow"><span class="num">05</span> STATE MACHINE</div>
       <h2>组网状态机</h2>
       <p class="lead">
         Group Manager 维护两类状态：rank 生命周期（IDLE → CHECKED_IN → ACTIVE）与有向链路状态
@@ -1280,7 +1147,7 @@
   <!-- DISPATCH -->
   <section id="dispatch">
     <div class="sec-head reveal">
-      <div class="eyebrow"><span class="num">07</span> DISPATCH</div>
+      <div class="eyebrow"><span class="num">06</span> DISPATCH</div>
       <h2>拷贝调度路径</h2>
       <p class="lead">
         调用方只提供源地址与目的地址，其余判断在库内完成：方向识别、远端 rank 定位、算子选择、按目标分组、同步或异步完成。
@@ -1341,6 +1208,139 @@
         <tr><td>RD2D / D2RD</td><td>跨机 HBM ↔ 本机 HBM</td><td>Device URMA / RDMA</td></tr>
       </tbody>
     </table>
+  </section>
+
+  <!-- DATA PLANE -->
+  <section id="dataplane">
+    <div class="sec-head reveal">
+      <div class="eyebrow"><span class="num">07</span> DATA PLANE</div>
+      <h2>数据面访问路径</h2>
+      <p class="lead">
+        D 表示 Device（HBM），RH 表示 Remote Host（跨机 DRAM），H 表示本机 DRAM。选择方向后，图中显示数据经过的内存与互联节点，
+        右侧给出该方向使用的引擎与实测带宽。
+      </p>
+    </div>
+
+    <div class="dp-wrap reveal">
+      <div class="dp-stage">
+        <svg class="dp-svg" viewBox="0 0 1000 420" role="img" aria-label="跨节点内存访问路径示意图">
+          <rect class="box" x="24" y="30" width="350" height="350" rx="20"/>
+          <text class="title" x="48" y="62">节点 A · rank 0</text>
+          <g id="node-hbmA">
+            <rect class="hbm" x="48" y="82" width="302" height="92" rx="12"/>
+            <text class="label" x="64" y="110">HBM · Device VA</text>
+            <text class="muted-t" x="64" y="132">0x1000_0000_0000 起</text>
+            <text class="muted-t" x="64" y="151">窗口 = maxHbmSize</text>
+          </g>
+          <rect class="nic" x="48" y="196" width="302" height="44" rx="10"/>
+          <text class="muted-t" x="64" y="223">NIC / UB / RoCE</text>
+          <g id="node-dramA">
+            <rect class="dram" x="48" y="262" width="302" height="92" rx="12"/>
+            <text class="label" x="64" y="290">DRAM · GVM 窗口</text>
+            <text class="muted-t" x="64" y="312">0x2800_4000_0000 起</text>
+            <text class="muted-t" x="64" y="331">窗口 = maxDramSize</text>
+          </g>
+
+          <rect class="box" x="626" y="30" width="350" height="350" rx="20"/>
+          <text class="title" x="650" y="62">节点 B · rank 1</text>
+          <g id="node-hbmB">
+            <rect class="hbm" x="650" y="82" width="302" height="92" rx="12"/>
+            <text class="label" x="666" y="110">HBM · Device VA</text>
+            <text class="muted-t" x="666" y="132">同一张 GVA 表</text>
+            <text class="muted-t" x="666" y="151">rank 1 窗口</text>
+          </g>
+          <rect class="nic" x="650" y="196" width="302" height="44" rx="10"/>
+          <text class="muted-t" x="666" y="223">NIC / UB / RoCE</text>
+          <g id="node-dramB">
+            <rect class="dram" x="650" y="262" width="302" height="92" rx="12"/>
+            <text class="label" x="666" y="290">DRAM · GVM 窗口</text>
+            <text class="muted-t" x="666" y="312">对端注册内存键</text>
+            <text class="muted-t" x="666" y="331">单边访问目标</text>
+          </g>
+
+          <rect class="netbox" x="404" y="146" width="192" height="128" rx="18"/>
+          <text class="label" x="500" y="190" text-anchor="middle">跨机互联</text>
+          <text class="muted-t" x="500" y="214" text-anchor="middle">UB / RoCE / TCP</text>
+          <text class="muted-t" x="500" y="236" text-anchor="middle">one-sided read / write</text>
+
+          <path id="dpFlowPath" class="flowline" d="M 230 128 C 470 70, 530 330, 700 308"/>
+          <circle id="dpGlow" r="13" fill="rgba(176,112,8,.16)"/>
+          <circle id="dpPacket" r="4.5" fill="#a86b06"/>
+          <text id="dpPathLabel" class="muted-t" x="500" y="398" text-anchor="middle">选择右侧的一种访问方向</text>
+        </svg>
+        <div class="legend">
+          <span><i style="background:rgba(14,154,112,.6)"></i>HBM / Device</span>
+          <span><i style="background:rgba(26,115,201,.6)"></i>DRAM / GVM</span>
+          <span><i style="background:rgba(91,79,214,.6)"></i>互联网络</span>
+          <span><i style="background:#a86b06"></i>数据包</span>
+        </div>
+      </div>
+
+      <aside class="dp-side">
+        <div class="dp-btns" id="dpBtns">
+          <button class="dp-btn" data-scen="local">L2G 本机 HBM → 全局</button>
+          <button class="dp-btn" data-scen="d2rh">D2RH 本机 HBM → 远端 DRAM</button>
+          <button class="dp-btn" data-scen="rh2d">RH2D 远端 DRAM → 本机 HBM</button>
+          <button class="dp-btn active" data-scen="d2d">RD2D 远端 HBM → 本机 HBM</button>
+          <button class="dp-btn" data-scen="h2h">H2H 远端 DRAM → 本机 DRAM</button>
+        </div>
+        <div class="dp-info">
+          <h3 id="dpTitle">RD2D · 远端 HBM 到本机 HBM</h3>
+          <div class="route" id="dpRoute">远端 rank 1 HBM → 本机 rank 0 HBM</div>
+          <p id="dpDesc">设备侧单边读：本机发起，按对端内存键直接读取远端 HBM，经 UB/RoCE 返回本机，再落盘到本地 HBM。</p>
+          <div class="dp-metrics">
+            <span class="metric">引擎 <b id="dpEngine">Device URMA / RDMA</b></span>
+            <span class="metric">实测 <b id="dpBw">166.47 GB/s</b></span>
+            <span class="metric">CPU <b>不参与</b></span>
+          </div>
+        </div>
+        <div class="note">
+          <span><b>单边语义：</b>数据面仅交换内存键与地址，远端不执行 recv，也不产生中断处理。
+          跨机拷贝的编程模型与本地 memcpy 一致，且不引入中转缓冲区。</span>
+        </div>
+      </aside>
+    </div>
+
+    <h3 class="sub-head reveal">L2G：本机 HBM 拷贝到全局地址</h3>
+    <p class="seq-lead reveal">
+      src 与 dst 均落在本 rank 的 HBM 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_DEVICE。调用链不经过传输层：
+      算子链中只有 SDMA，搬运在本地 stream 上完成，同步返回即表示数据对后续算子可见。
+    </p>
+    <div class="seq-wrap dp-seq reveal">
+      <div class="seq-bar">
+        <span class="step" id="l2gStep">0 / 14</span>
+        <button class="btn small" id="l2gPrev">上一步</button>
+        <button class="btn small primary" id="l2gPlay">播放</button>
+        <button class="btn small" id="l2gNext">下一步</button>
+        <button class="btn small" id="l2gReset">重置</button>
+      </div>
+      <div class="seq-scroll">
+        <svg class="seq-svg" id="l2gSvg" role="img" aria-label="L2G 本机 HBM 拷贝时序图"></svg>
+      </div>
+    </div>
+
+    <h3 class="sub-head reveal">D2RH：本机 HBM 单边写入远端 DRAM</h3>
+    <p class="seq-lead reveal">
+      dst 落在远端 rank 的 host 窗口，方向判定为 LOCAL_DEVICE → GLOBAL_HOST。算子链选中 Device URMA：
+      本端提交写请求并等待完成事件，远端仅提供已注册的内存键与地址，CPU 不参与数据搬运。
+    </p>
+    <div class="seq-wrap dp-seq reveal">
+      <div class="seq-bar">
+        <span class="step" id="d2rhStep">0 / 17</span>
+        <button class="btn small" id="d2rhPrev">上一步</button>
+        <button class="btn small primary" id="d2rhPlay">播放</button>
+        <button class="btn small" id="d2rhNext">下一步</button>
+        <button class="btn small" id="d2rhReset">重置</button>
+      </div>
+      <div class="seq-scroll">
+        <svg class="seq-svg" id="d2rhSvg" role="img" aria-label="D2RH 本机 HBM 写入远端 DRAM 时序图"></svg>
+      </div>
+    </div>
+
+    <div class="note reveal">
+      <span><b>测试条件：</b>数据来自 README 的昇腾 A3 超节点测试（DRAM 与 HBM 池化，UB 1.0，单 DIE + 单 CPU，
+      单次 1–2 GB，1 GB/s = 1000³ B/s）。A2 服务器可通过 Device RoCE 获得同等的跨机访问能力，具体数值取决于硬件与拓扑。</span>
+    </div>
   </section>
 
   <!-- OFFLOAD -->
