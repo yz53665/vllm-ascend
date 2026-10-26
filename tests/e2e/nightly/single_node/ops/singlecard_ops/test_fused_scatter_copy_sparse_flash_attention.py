@@ -13,9 +13,12 @@ import torch
 
 torch_npu = pytest.importorskip("torch_npu")
 
-from vllm_ascend.utils import enable_custom_op  # noqa: E402
+from vllm_ascend.utils import enable_custom_op, load_custom_ops_library  # noqa: E402
 
 enable_custom_op()
+# ASCEND950 的硬件 profile 未声明 RUNTIME_CUSTOM_OPS，enable_custom_op() 在 A5 上返回 False，
+# 不会注册 _C_ascend 算子。本用例只验证单个算子，单独加载扩展即可。
+load_custom_ops_library()
 
 
 BLOCK_SIZE = 128
