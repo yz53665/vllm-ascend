@@ -506,12 +506,14 @@ private:
         const uint64_t cacheBase =
             static_cast<uint64_t>(row) * sourceCapacity;
         LocalTensor<int32_t> output = unionSourceBuf.Get<int32_t>();
-        LocalTensor<float> invalid = output.ReinterpretCast<float>();
 
-        // IEEE -0.0F has the INT32_MIN bit pattern used by invalid slots.
+        // Fill the sentinel as int32.  Reinterpreting a float block and
+        // duplicating -0.0F relies on the INT32_MIN bit pattern surviving, but
+        // DAV_3510 normalizes -0.0F to +0.0F, which produces slot 0 and turns
+        // the whole cleared row into valid slots.
         // Do not rebuild the block or wait between chunks: it is immutable
         // until all MTE3 copies have completed.
-        Duplicate(invalid, -0.0F, FIRST_DECODE_CLEAR_CHUNK);
+        Duplicate(output, INVALID_CACHE_SLOT, FIRST_DECODE_CLEAR_CHUNK);
         Sync<HardEvent::V_MTE3>(HardEvent::V_MTE3);
         for (uint32_t source = 0U; source < sourceCapacity;
              source += FIRST_DECODE_CLEAR_CHUNK) {

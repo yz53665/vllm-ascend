@@ -507,7 +507,16 @@ def _run_and_assert(case: ManageCase) -> tuple[torch.Tensor, tuple[torch.Tensor,
             actual_topk = src[route, 0, :valid]
             expected_topk = reference[route, :valid]
             if state == REQUEST_STATE_NON_OFFLOAD:
-                torch.testing.assert_close(actual_topk, expected_topk, rtol=0, atol=0)
+                # The op contract is the selected slot set; emission order is
+                # not defined.  DAV_3510 orders tied/near-tied scores
+                # differently from DAV_2201, so compare as a set like the
+                # offload branches do.
+                torch.testing.assert_close(
+                    actual_topk.sort().values,
+                    expected_topk.sort().values,
+                    rtol=0,
+                    atol=0,
+                )
                 torch.testing.assert_close(dst[route], src[route], rtol=0, atol=0)
                 assert int(route_miss[route]) == 0
             else:

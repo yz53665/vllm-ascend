@@ -121,11 +121,13 @@ __aicore__ inline void PrepareNonOffloadRows(
             if (!transitionCleanupBufferReady) {
                 pipe->InitBuffer(transitionInvalidBuf,
                                  TRANSITION_CLEANUP_CHUNK * sizeof(int32_t));
-                LocalTensor<float> invalidValues =
-                    transitionInvalidBuf.Get<int32_t>().ReinterpretCast<float>();
-                // IEEE -0.0F has the INT32_MIN bit pattern; reinterpreting
-                // the buffer produces the required invalid slot sentinel.
-                Duplicate(invalidValues, -0.0F, TRANSITION_CLEANUP_CHUNK);
+                LocalTensor<int32_t> invalidValues =
+                    transitionInvalidBuf.Get<int32_t>();
+                // Fill the sentinel as int32.  Duplicating a reinterpreted
+                // -0.0F loses the INT32_MIN bit pattern on DAV_3510, where it
+                // is normalized to +0.0F (slot 0, a valid slot).
+                Duplicate(invalidValues, MtpUnion::INVALID_CACHE_SLOT,
+                          TRANSITION_CLEANUP_CHUNK);
                 PipeBarrier<PIPE_V>();
                 transitionCleanupBufferReady = true;
             }
