@@ -62,6 +62,7 @@ from vllm_ascend.distributed.kv_transfer.utils.memfabric_transfer_engine import 
     global_memfabric_te,
 )
 from vllm_ascend.distributed.kv_transfer.utils.utils import (
+    RegisterRegions,
     collect_storage_merged_register_regions,
     get_transfer_timeout_value,
     validate_register_region_count,
@@ -543,9 +544,14 @@ class SFAPDRD2HConsumerWorker:
                 has_indexer=indexer_t is not None,
             )
 
-        # Create memfabric engine (no registration)
+        # Pull mode lands every read in this rank's own memory, so those
+        # destinations must be registered before the read thread starts:
+        # device_urma resolves each local address against this rank's
+        # registration table, and an unregistered destination fails the first
+        # batch read (sdma keeps no table and ignores the lookup).
         self._ensure_engine()
         self._bind_copy_sfa_tail_destinations()
+        self._register_pull_destinations(kv_caches)
         read_state = self._build_consumer_read_state()
         # Start MembPullReadThread (ZMQ ROUTER + memfabric read)
         self._mf_read_thread = MembPullReadThread(
@@ -594,6 +600,63 @@ class SFAPDRD2HConsumerWorker:
                 "fused_copy_sfa topk row is missing circular tail slots: "
                 f"row_tokens={self._topk_row_tokens}, block_size={self._copy_sfa_block_size}"
             )
+
+    def _register_pull_destinations(self, kv_caches: dict[str, torch.Tensor]) -> None:
+        """Register every local destination that the pull reads land in.
+
+        The consumer pulls into this rank's TP-shared CPU KV pool (rd2h) and
+        rank-local HBM (indexer/scale, fused_copy_sfa topk rows, DSpark draft
+        pages). MemFabric validates each local address against this rank's
+        registration table, so all of them have to be registered before the
+        first batch read.
+        """
+        num_blocks = self.kv_cache_config.num_blocks
+        # The shared CPU pool is allocated only by TP rank 0 and reaches the
+        # other ranks as broadcast GVA bases, so register by address rather
+        # than by tensor.
+        ptrs: list[int] = []
+        sizes: list[int] = []
+        for bases, block_lens in zip(self._main_gva_bases, self._main_block_lens):
+            for base, block_len in zip(bases, block_lens):
+                ptrs.append(int(base))
+                sizes.append(int(block_len) * num_blocks)
+
+        hbm_destinations: dict[str, Any] = {}
+        for pool_idx, main_name in enumerate(self._main_names):
+            indexer_t = self._indexer_tensors[pool_idx]
+            if indexer_t is not None:
+                hbm_destinations[f"{main_name}/indexer"] = indexer_t
+            indexer_scale_t = self._indexer_scale_tensors[pool_idx]
+            if indexer_scale_t is not None:
+                hbm_destinations[f"{main_name}/indexer_scale"] = indexer_scale_t
+        for draft_name in self.dspark_draft_layer_names:
+            hbm_destinations[draft_name] = kv_caches[draft_name]
+        if self._topk_k_bases:
+            hbm_destinations["copy_sfa_topk"] = [
+                *self.offload_manager.topk_buffers_k,
+                *self.offload_manager.topk_buffers_v,
+            ]
+        hbm_regions = collect_storage_merged_register_regions(hbm_destinations)
+        ptrs.extend(hbm_regions.ptrs)
+        sizes.extend(hbm_regions.lengths)
+
+        register_regions = RegisterRegions(
+            ptrs=ptrs,
+            lengths=sizes,
+            logical_tensor_count=hbm_regions.logical_tensor_count,
+            logical_total_bytes=hbm_regions.logical_total_bytes,
+        )
+        validate_register_region_count(register_regions)
+        global_memfabric_te.register_buffer(register_regions.ptrs, register_regions.lengths)
+        logger.info(
+            "SFAPDRD2H D registered pull destinations: regions=%d, bytes=%d, "
+            "shared_cpu_layers=%d, indexer_layers=%d, dspark_draft_layers=%d",
+            len(register_regions.ptrs),
+            register_regions.registered_bytes,
+            len(self._main_names),
+            sum(t is not None for t in self._indexer_tensors),
+            len(self.dspark_draft_layer_names),
+        )
 
     def shutdown(self) -> None:
         read_thread = getattr(self, "_mf_read_thread", None)
