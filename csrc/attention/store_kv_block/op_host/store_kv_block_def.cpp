@@ -30,13 +30,13 @@ class StoreKVBlock : public OpDef {
     // across every input, otherwise ACLNN cannot match a dtype config.
     this->Input("keyIn")
         .ParamType(REQUIRED)
-        .DataType({ge::DT_INT8, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT32})
+        .DataType({ge::DT_INT8, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT})
         .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .AutoContiguous();
     this->Input("keyCacheIn")
         .ParamType(REQUIRED)
-        .DataType({ge::DT_INT8, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT32})
+        .DataType({ge::DT_INT8, ge::DT_FLOAT16, ge::DT_BF16, ge::DT_FLOAT8_E4M3FN, ge::DT_FLOAT})
         .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
         .AutoContiguous();

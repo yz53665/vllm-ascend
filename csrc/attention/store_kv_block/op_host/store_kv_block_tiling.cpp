@@ -82,7 +82,7 @@ static ge::graphStatus DoCommonTiling(gert::TilingContext* context, StoreKVBlock
         typeByte = sizeof(uint16_t);
         params.tilingKey = 2;
     } else if (xDataType == ge::DataType::DT_INT32 || xDataType == ge::DataType::DT_UINT32 ||
-               xDataType == ge::DataType::DT_FLOAT32) {
+               xDataType == ge::DataType::DT_FLOAT) {
         typeByte = sizeof(uint32_t);
         params.tilingKey = 4;
     } else {
