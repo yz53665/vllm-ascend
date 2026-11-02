@@ -74,9 +74,11 @@ class LayerMetadata:
     block_len: list[int]
     block_size_scale: list[int]
     # The first ``main_tensor_count`` entries belong to the main MLA cache.
-    # Remaining entries, when ``has_indexer`` is true, belong to the indexer.
-    # Keeping this explicit is required for sparse layers that reuse top-k
-    # indices and therefore do not own an indexer cache at all.
+    # ``main_tensor_count`` is 2 for the BF16 layout (separate K and V tensors)
+    # and 1 for a packed SFA main cache (C8/TurboQuant row bytes, or a single
+    # physical tensor). Remaining entries, when ``has_indexer`` is true, belong
+    # to the indexer. Keeping this explicit is required for sparse layers that
+    # reuse top-k indices and therefore do not own an indexer cache at all.
     main_tensor_count: int = 2
     has_indexer: bool = False
 

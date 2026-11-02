@@ -530,11 +530,10 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         )
         if enable_dsa_cp():
             raise NotImplementedError("Sparse KV offload currently requires TP without context parallelism")
-        if self.uses_packed_sfa_main_cache:
+        if self.uses_packed_sfa_main_cache and (offload_cfg.use_fused_copy_sfa or offload_cfg.use_fused_overlap):
             raise NotImplementedError(
-                "Sparse KV offload does not support packed SFA main caches "
-                "(C8 or TQ4); sparse LI C8 is supported for the "
-                "device-resident indexer cache."
+                "Sparse KV offload packed SFA main caches (C8 or TQ4) cannot be combined "
+                "with use_fused_copy_sfa or use_fused_overlap."
             )
         self._current_layer_name: str | None = None
         self.block_size = self.vllm_config.cache_config.block_size
@@ -611,13 +610,21 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         layer_id = manager._get_offload_layer_id(layer_name)
         if manager.tp_rank != 0:
             return None, None
-        return manager.k_caches_cpu[layer_id], manager.v_caches_cpu[layer_id]
+        k_cache = manager.k_caches_cpu[layer_id]
+        # A packed main cache reuses the same byte pool for the V slots so the
+        # offload kernels keep their K/V-pair contract.
+        v_cache = k_cache if manager.uses_packed_main_cache else manager.v_caches_cpu[layer_id]
+        return k_cache, v_cache
 
     @staticmethod
     def _resident_views(manager, layer_name: str, rows: int):
         layer_id = manager._get_offload_layer_id(layer_name)
         buffer_k = manager.topk_buffers_k[layer_id]
-        buffer_v = manager.topk_buffers_v[layer_id]
+        if manager.uses_packed_main_cache:
+            # The resident buffer is int8 storage; expose the model's packed
+            # cache dtype so the quantized sparse kernel picks the right path.
+            buffer_k = buffer_k.view(manager.packed_main_dtype)
+        buffer_v = buffer_k if manager.uses_packed_main_cache else manager.topk_buffers_v[layer_id]
         pages_per_row = manager.topk_buffer_size // manager.block_size
         resident_pages = rows * pages_per_row
         resident_k = buffer_k.reshape(-1, buffer_k.shape[-2], buffer_k.shape[-1])[
@@ -898,6 +905,10 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         slots: torch.Tensor,
         attn_metadata: AscendSFAMetadata,
     ):
+        if self.uses_packed_sfa_main_cache:
+            # The packed components are produced by the base implementation and
+            # pushed to the CPU pool from _store_parallel_kv.
+            return super().exec_kv(kv_no_split, cos, sin, kv_cache, slots, attn_metadata)
         attn_metadata = cast(AscendSFAOffloadMetadata, attn_metadata)
         if self._is_decode_only(attn_metadata):
             k_nope, k_pe = self._compute_kv_only(kv_no_split, cos, sin)
@@ -950,6 +961,62 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         )
         self._copy_prefill_kv_to_copy_sfa_row(kv_cache, attn_metadata, manager, layer_name)
         return result
+
+    def _store_parallel_kv(
+        self,
+        k_pe: torch.Tensor | None,
+        k_nope: torch.Tensor | None,
+        knope_scale: torch.Tensor | None,
+        fused_kv_no_split: torch.Tensor | None,
+        kv_ag_handles: list[torch.distributed.Work],
+        kv_cache: tuple[torch.Tensor, ...] | None,
+        slot_mapping_sfa: torch.Tensor,
+        attn_metadata: M,
+        full_gather_o_proj_enabled: bool,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        if not self.uses_packed_sfa_main_cache:
+            return super()._store_parallel_kv(
+                k_pe,
+                k_nope,
+                knope_scale,
+                fused_kv_no_split,
+                kv_ag_handles,
+                kv_cache,
+                slot_mapping_sfa,
+                attn_metadata,
+                full_gather_o_proj_enabled,
+            )
+        stored = (k_pe, k_nope)
+        if kv_cache is not None and kv_cache[0] is not None:
+            # Colocate debug keeps an NPU paged main cache: mirror the write.
+            stored = super()._store_parallel_kv(
+                k_pe,
+                k_nope,
+                knope_scale,
+                fused_kv_no_split,
+                kv_ag_handles,
+                kv_cache,
+                slot_mapping_sfa,
+                attn_metadata,
+                full_gather_o_proj_enabled,
+            )
+        packed_kv = self._pack_sfa_main_cache_rows(k_pe, k_nope, knope_scale)
+        manager = get_sparse_kv_offload_manager()
+        layer_name = self._offload_layer_name()
+        k_cache_cpu, v_cache_cpu = self._cpu_cache_pair(manager, layer_name)
+        manager.offload_new_kv(
+            layer_name=layer_name,
+            slot_mapping=slot_mapping_sfa[: packed_kv.shape[0]],
+            k_cache_cpu=k_cache_cpu,
+            v_cache_cpu=v_cache_cpu,
+            k_cache_npu=None,
+            v_cache_npu=None,
+            k=packed_kv,
+            v=packed_kv,
+            has_prefill=False,
+            capturing=self._in_graph_runtime(),
+        )
+        return stored
 
     def _copy_prefill_kv_to_copy_sfa_row(self, kv_cache, attn_metadata: M, manager, layer_name: str) -> None:
         """Colocate: D2D this batch's new prefill KV from the paged main cache
@@ -1732,17 +1799,34 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
             capturing=self._in_graph_runtime(),
             skip_topk=self.skip_topk,
         )
-        decode_attn_output = DeviceOperator.execute_sparse_flash_attention_process(
-            self,
-            ql_nope[:num_decode_tokens],
-            q_pe[:num_decode_tokens],
-            (resident_k, resident_v),
-            resident_slot_indices.unsqueeze(1),
-            attn_metadata,
-            resident_query_lens,
-            resident_seq_lens,
-            block_table=resident_block_table,
-        )
+        # A packed main cache stores one byte row, so the attention op reads
+        # kv_cache[0] only and picks the quantized sparse kernel by dtype.
+        if self.enable_sparse_sfa_turboquant:
+            # TQ4 slots need the TurboQuant operator and its inverse rescale.
+            tq_attn_out, _, _ = self._turboquant_sfa(
+                self._tq_rotate_query(ql_nope[:num_decode_tokens], q_pe[:num_decode_tokens]),
+                resident_k,
+                resident_slot_indices.unsqueeze(1),
+                resident_block_table,
+                resident_query_lens,
+                resident_seq_lens,
+                sparse_mode=3,
+            )
+            assert self.turboquant is not None
+            decode_attn_output = self.turboquant.inverse(tq_attn_out)
+        else:
+            resident_cache = (resident_k,) if self.uses_packed_sfa_main_cache else (resident_k, resident_v)
+            decode_attn_output = DeviceOperator.execute_sparse_flash_attention_process(
+                self,
+                ql_nope[:num_decode_tokens],
+                q_pe[:num_decode_tokens],
+                resident_cache,
+                resident_slot_indices.unsqueeze(1),
+                attn_metadata,
+                resident_query_lens,
+                resident_seq_lens,
+                block_table=resident_block_table,
+            )
         if num_prefills == 0:
             return self._pad_to_input_tokens(decode_attn_output, ql_nope.shape[0])
 

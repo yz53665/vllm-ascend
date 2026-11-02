@@ -1712,6 +1712,29 @@ class AscendSFAImpl(MLAAttentionImpl):
         """Prepare native KV tensors for an optional parallel layout."""
         return None, []
 
+    def _pack_sfa_main_cache_rows(
+        self,
+        k_pe: torch.Tensor | None,
+        k_nope: torch.Tensor | None,
+        knope_scale: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Concatenate native KV components into one packed main-cache row."""
+        assert k_pe is not None
+        assert k_nope is not None
+        assert knope_scale is not None
+        packed_kv = torch.cat(
+            [
+                k_nope.view(-1, k_nope.shape[-1]),
+                # Flatten leading dimensions even when the RoPE feature dimension is zero.
+                k_pe.flatten(0, -2),
+                knope_scale.view(-1, knope_scale.shape[-1]),
+            ],
+            dim=-1,
+        )
+        packed_head_dim = self.sfa_qsfa_packed_kv_head_dim
+        assert packed_kv.shape[-1] == packed_head_dim
+        return packed_kv.view(-1, packed_head_dim)
+
     def _store_parallel_kv(
         self,
         k_pe: torch.Tensor | None,
@@ -1729,22 +1752,9 @@ class AscendSFAImpl(MLAAttentionImpl):
     ]:
         """Store KV produced by native preprocessing."""
         if self.uses_packed_sfa_main_cache:
-            assert k_pe is not None
-            assert k_nope is not None
-            assert knope_scale is not None
-            packed_kv = torch.cat(
-                [
-                    k_nope.view(-1, k_nope.shape[-1]),
-                    # Flatten leading dimensions even when the RoPE feature dimension is zero.
-                    k_pe.flatten(0, -2),
-                    knope_scale.view(-1, knope_scale.shape[-1]),
-                ],
-                dim=-1,
-            )
+            packed_kv = self._pack_sfa_main_cache_rows(k_pe, k_nope, knope_scale)
             packed_head_dim = self.sfa_qsfa_packed_kv_head_dim
-            assert packed_kv.shape[-1] == packed_head_dim
             assert kv_cache is not None
-            packed_kv = packed_kv.view(-1, packed_head_dim)
             DeviceOperator.scatter_cache(
                 kv_cache[0].view(-1, packed_head_dim),
                 slot_mapping_sfa[: packed_kv.shape[0]].view(-1, 1),
@@ -1836,9 +1846,13 @@ class AscendSFAImpl(MLAAttentionImpl):
 
         # Sparse KV offload registers the main MLA cache as a 6-tuple
         # (k_npu, v_npu, k_cpu, v_cpu, topk_buffer_k, topk_buffer_v); the
-        # attention kernels only consume the leading NPU pair.
+        # attention kernels only consume the main NPU cache. A packed main
+        # cache has a single leg and its V slots are empty.
         if len(main_cache) == OFFLOAD_KV_CACHE_TUPLE_LEN:
-            main_cache = (main_cache[OFFLOAD_K_CACHE_NPU_INDEX], main_cache[OFFLOAD_V_CACHE_NPU_INDEX])
+            if self.uses_packed_sfa_main_cache:
+                main_cache = (main_cache[OFFLOAD_K_CACHE_NPU_INDEX],)
+            else:
+                main_cache = (main_cache[OFFLOAD_K_CACHE_NPU_INDEX], main_cache[OFFLOAD_V_CACHE_NPU_INDEX])
 
         indexer_cache = self.indexer.k_cache.kv_cache
         if indexer_cache is None:

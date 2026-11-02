@@ -1,0 +1,8 @@
+(EngineCore pid=198050) WARNING 10-29 17:36:02 [scheduler.py:579] Metaserver returned HTTP 502 for request chatcmpl-1017502b-b38e-4c92-9598-092829898ab4; treating it as delivered for legacy-proxy compatibility
+2026-10-29 17:36:02.329700 WARN [198050-198766][SMEM smem_tcp_config_store.cpp:950 LinkBrokenHandler] link broken, linkId: 4
+2026-10-29 17:36:02.329775 ERROR [198050-198766][AccLink acc_tcp_link_complex_default.h:486 NonBlockSend] Failed to send message with message type 0 as the link is broken
+2026-10-29 17:36:03.329983 ERROR [198050-198766][SMEM smem_tcp_config_store.cpp:890 ReConnectAfterBroken] Reconnect to server failed, ip: 141.61.33.22 port: 44480 result: -1
+2026-10-29 17:36:03.330010 ERROR [198050-198766][AccLink acc_tcp_link_complex_default.h:486 NonBlockSend] Failed to send message with message type 0 as the link is broken
+2026-10-29 17:36:03.330023 ERROR [198050-198766][SMEM smem_tcp_config_store.cpp:840 SendMessageBlocked] send message failed, result: -11
+2026-10-29 17:36:03.330034 ERROR [198050-198766][SMEM smem_tcp_config_store.cpp:227 Leave] Leave: send leave request failed, get null response
+2026-10-29 17:36:03.343574 WARN [198050-198766][HYBM hybm_stream_manager.cpp:141 AbortAllThreadAclStreams] AclrtStreamAbort done for peer fault, stream: 0xfff9cc0211b8

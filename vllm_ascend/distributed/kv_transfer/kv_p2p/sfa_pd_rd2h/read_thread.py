@@ -51,9 +51,9 @@ class ConsumerReadState:
     tp_size: int
     layer_metadata: dict[str, Any]
     main_name_to_idx: dict[str, int]
-    cpu_pools: list[tuple[Any, Any] | None]
-    main_gva_bases: list[tuple[int, int]]
-    main_block_lens: list[tuple[int, int]]
+    cpu_pools: list[tuple[Any, ...] | None]
+    main_gva_bases: list[tuple[int, ...]]
+    main_block_lens: list[tuple[int, ...]]
     indexer_tensors: list[Any | None]
     indexer_scale_tensors: list[Any | None]
     dest_blocks_by_req: dict[str, tuple[list[int], list[int]]]
@@ -85,6 +85,12 @@ def _coalesce_desc(
     cum = np.cumsum(length)
     merged_len = cum[run_end] - cum[run_start] + length[run_start]
     return peer[run_start], local[run_start], merged_len
+
+
+def _has_main_destination(layer: dict[str, Any]) -> bool:
+    """Whether this rank holds a local destination for every main leg."""
+    main_legs = layer["main_legs"]
+    return bool(main_legs) and all(leg["d_base"] is not None for leg in main_legs)
 
 
 def _tp_block_range(
@@ -534,24 +540,48 @@ class MembPullReadThread(threading.Thread):
         p_block_len = p_meta["block_len"]
         p_block_size_scale = p_meta.get("block_size_scale", [1] * len(p_base_addrs))
         main_tensor_count = int(p_meta.get("main_tensor_count", 2))
-        if main_tensor_count != 2 or len(p_base_addrs) < main_tensor_count:
+        if main_tensor_count not in (1, 2) or len(p_base_addrs) < main_tensor_count:
             raise RuntimeError(
-                f"MembPull P metadata for {layer_name} must expose two main K/V "
-                f"tensors, got main_tensor_count={main_tensor_count}, "
+                f"MembPull P metadata for {layer_name} must expose one packed main tensor "
+                f"or two main K/V tensors, got main_tensor_count={main_tensor_count}, "
                 f"total={len(p_base_addrs)}"
             )
         p_has_indexer = bool(p_meta.get("has_indexer", len(p_base_addrs) > main_tensor_count))
 
         try:
-            k_cpu_ptr, v_cpu_ptr = state.main_gva_bases[offload_id]
-            d_k_len, d_v_len = state.main_block_lens[offload_id]
+            d_main_bases = state.main_gva_bases[offload_id]
+            d_main_lens = state.main_block_lens[offload_id]
         except IndexError as error:
             raise RuntimeError(f"MembPull shared CPU pool metadata is missing for {layer_name}") from error
-        p_k_len = p_block_len[0] * p_block_size_scale[0]
-        p_v_len = p_block_len[1] * p_block_size_scale[1]
-        if (p_k_len, p_v_len) != (d_k_len, d_v_len):
+        if len(d_main_bases) != main_tensor_count or len(d_main_lens) != main_tensor_count:
             raise RuntimeError(
-                f"MembPull main KV layout mismatch for {layer_name}: P=({p_k_len}, {p_v_len}), D=({d_k_len}, {d_v_len})"
+                f"MembPull main leg count mismatch for {layer_name}: P={main_tensor_count}, "
+                f"D bases={len(d_main_bases)}, lens={len(d_main_lens)}"
+            )
+        main_legs: list[dict[str, Any]] = []
+        for leg_idx in range(main_tensor_count):
+            p_leg_len = p_block_len[leg_idx] * p_block_size_scale[leg_idx]
+            d_leg_len = d_main_lens[leg_idx]
+            if p_leg_len != d_leg_len:
+                raise RuntimeError(
+                    f"MembPull main leg {leg_idx} layout mismatch for {layer_name}: "
+                    f"P={p_leg_len}, D={d_leg_len}"
+                )
+            # fused_copy_sfa mirrors BF16 K/V rows, so only the two-leg BF16
+            # layout maps a main leg onto a top-k buffer.
+            topk_base = None
+            if main_tensor_count == 2:
+                topk_bases = state.topk_k_bases if leg_idx == 0 else state.topk_v_bases
+                if offload_id < len(topk_bases):
+                    topk_base = topk_bases[offload_id]
+            main_legs.append(
+                {
+                    "p_base": p_base_addrs[leg_idx],
+                    "p_len": p_leg_len,
+                    "d_base": d_main_bases[leg_idx],
+                    "d_len": d_leg_len,
+                    "topk_base": topk_base,
+                }
             )
         d_indexer = state.indexer_tensors[pool_idx]
         if p_has_indexer != (d_indexer is not None):
@@ -616,12 +646,7 @@ class MembPullReadThread(threading.Thread):
             "layer_name": layer_name,
             "pool_idx": pool_idx,
             "offload_id": offload_id,
-            "p_k_base": p_base_addrs[0],
-            "p_v_base": p_base_addrs[1],
-            "p_k_len": p_block_len[0] * p_block_size_scale[0],
-            "p_v_len": p_block_len[1] * p_block_size_scale[1],
-            "k_cpu_ptr": k_cpu_ptr,
-            "v_cpu_ptr": v_cpu_ptr,
+            "main_legs": main_legs,
             "indexer": indexer,
             "scale": scale,
         }
@@ -681,34 +706,31 @@ class MembPullReadThread(threading.Thread):
         offload_id = layer["offload_id"]
         if offload_id >= len(state.topk_k_bases) or offload_id >= len(state.topk_v_bases):
             raise RuntimeError(f"MembPull fused_copy_sfa tail is missing topk buffer bases for {layer['layer_name']}")
-        p_k_len = int(layer["p_k_len"])
-        p_v_len = int(layer["p_v_len"])
-        if p_k_len % state.block_size or p_v_len % state.block_size:
-            raise RuntimeError(
-                f"MembPull fused_copy_sfa tail requires block-aligned main KV bytes: "
-                f"k={p_k_len}, v={p_v_len}, block_size={state.block_size}"
-            )
-        token_bytes_k = p_k_len // state.block_size
-        token_bytes_v = p_v_len // state.block_size
+        legs = [leg for leg in layer["main_legs"] if leg["topk_base"] is not None]
+        if len(legs) != 2:
+            # fused_copy_sfa tails mirror the BF16 K/V main cache only.
+            return
+        for leg in legs:
+            p_len = int(leg["p_len"])
+            if p_len % state.block_size:
+                raise RuntimeError(
+                    f"MembPull fused_copy_sfa tail requires block-aligned main KV bytes: "
+                    f"leg_bytes={p_len}, block_size={state.block_size}"
+                )
         ring_offset = (tail.tail_block_index % 2) * state.block_size
         dst_token = tail.pool_slot * state.topk_row_tokens + state.topk_hot_tokens + ring_offset
         p_block_id = int(p_main_block_ids[local_idx])
+        token_bytes = [int(leg["p_len"]) // state.block_size for leg in legs]
         peer = np.array(
-            [
-                int(layer["p_k_base"]) + p_block_id * p_k_len,
-                int(layer["p_v_base"]) + p_block_id * p_v_len,
-            ],
+            [int(leg["p_base"]) + p_block_id * int(leg["p_len"]) for leg in legs],
             dtype=np.int64,
         )
         local = np.array(
-            [
-                state.topk_k_bases[offload_id] + dst_token * token_bytes_k,
-                state.topk_v_bases[offload_id] + dst_token * token_bytes_v,
-            ],
+            [int(leg["topk_base"]) + dst_token * leg_bytes for leg, leg_bytes in zip(legs, token_bytes)],
             dtype=np.int64,
         )
         length = np.array(
-            [tail.tail_tokens * token_bytes_k, tail.tail_tokens * token_bytes_v],
+            [tail.tail_tokens * leg_bytes for leg_bytes in token_bytes],
             dtype=np.int64,
         )
         peer_chunks.append(peer)
@@ -742,15 +764,17 @@ class MembPullReadThread(threading.Thread):
         offload_id = layer["offload_id"]
         if offload_id >= len(state.topk_k_bases) or offload_id >= len(state.topk_v_bases):
             raise RuntimeError(f"MembPull fused_copy_sfa dense is missing topk buffer bases for {layer['layer_name']}")
-        p_k_len = int(layer["p_k_len"])
-        p_v_len = int(layer["p_v_len"])
-        if p_k_len % state.block_size or p_v_len % state.block_size:
-            raise RuntimeError(
-                f"MembPull fused_copy_sfa dense requires block-aligned main KV bytes: "
-                f"k={p_k_len}, v={p_v_len}, block_size={state.block_size}"
-            )
-        token_bytes_k = p_k_len // state.block_size
-        token_bytes_v = p_v_len // state.block_size
+        legs = [leg for leg in layer["main_legs"] if leg["topk_base"] is not None]
+        if len(legs) != 2:
+            # fused_copy_sfa rows mirror the BF16 K/V main cache only.
+            return
+        for leg in legs:
+            p_len = int(leg["p_len"])
+            if p_len % state.block_size:
+                raise RuntimeError(
+                    f"MembPull fused_copy_sfa dense requires block-aligned main KV bytes: "
+                    f"leg_bytes={p_len}, block_size={state.block_size}"
+                )
         # Copy every logical block of the prompt into the row's hot region,
         # block b to row offset b*block_size. P may split large requests into
         # chunk handshakes; copy only the blocks this chunk carries (the
@@ -767,10 +791,11 @@ class MembPullReadThread(threading.Thread):
         dst_blocks = np.arange(start, end, dtype=np.int64)
         dst_tokens = dest.pool_slot * state.topk_row_tokens + dst_blocks * state.block_size
         partial = np.minimum(dest.kv_tokens - dst_blocks * state.block_size, state.block_size)
-        for p_base, p_block_len, token_bytes, topk_base in (
-            (int(layer["p_k_base"]), p_k_len, token_bytes_k, state.topk_k_bases[offload_id]),
-            (int(layer["p_v_base"]), p_v_len, token_bytes_v, state.topk_v_bases[offload_id]),
-        ):
+        for leg in legs:
+            p_base = int(leg["p_base"])
+            p_block_len = int(leg["p_len"])
+            token_bytes = p_block_len // state.block_size
+            topk_base = int(leg["topk_base"])
             # P-side blocks are not contiguous; _coalesce_desc merges only the
             # opportunistically contiguous runs in both address spaces.
             cp, cl, coalesced_lengths = _coalesce_desc(
@@ -841,8 +866,7 @@ class MembPullReadThread(threading.Thread):
         if not p_main_block_ids and not p_indexer_block_ids:
             raise RuntimeError(f"MembPull source block ids are empty for {layer_name}")
 
-        p_k_base, p_v_base = layer["p_k_base"], layer["p_v_base"]
-        p_k_len, p_v_len = layer["p_k_len"], layer["p_v_len"]
+        main_legs = layer["main_legs"]
         # Tail D2D uses the unsliced P main list: every D rank needs the last
         # incomplete block even when it does not own that CPU-pool range.
         p_main_block_ids_for_tail = p_main_block_ids
@@ -855,7 +879,7 @@ class MembPullReadThread(threading.Thread):
 
         # Main MLA is replicated across P ranks and already split across D TP; only the
         # group's first contributor pulls it, so it is neither duplicated nor fine-split.
-        pull_main = layer["k_cpu_ptr"] is not None and layer["v_cpu_ptr"] is not None and group_member_idx == 0
+        pull_main = _has_main_destination(layer) and group_member_idx == 0
         if pull_main and len(p_main_block_ids) != len(d_main_ids):
             raise RuntimeError(
                 f"MembPull main block count mismatch for req {ext_req_id}: "
@@ -874,24 +898,16 @@ class MembPullReadThread(threading.Thread):
         if n_main:
             p_main = np.array(p_main_block_ids, dtype=np.int64)
             d_main = np.array(d_main_ids, dtype=np.int64)
-            len_k: np.ndarray = np.full(n_main, p_k_len, dtype=np.int64)
-            len_v: np.ndarray = np.full(n_main, p_v_len, dtype=np.int64)
-            cp, cl, coalesced_lengths = _coalesce_desc(
-                p_k_base + p_main * p_k_len,
-                layer["k_cpu_ptr"] + d_main * p_k_len,
-                len_k,
-            )
-            peer_chunks.append(cp)
-            local_chunks.append(cl)
-            length_chunks.append(coalesced_lengths)
-            cp, cl, coalesced_lengths = _coalesce_desc(
-                p_v_base + p_main * p_v_len,
-                layer["v_cpu_ptr"] + d_main * p_v_len,
-                len_v,
-            )
-            peer_chunks.append(cp)
-            local_chunks.append(cl)
-            length_chunks.append(coalesced_lengths)
+            for leg in main_legs:
+                p_len = int(leg["p_len"])
+                cp, cl, coalesced_lengths = _coalesce_desc(
+                    int(leg["p_base"]) + p_main * p_len,
+                    int(leg["d_base"]) + d_main * p_len,
+                    np.full(n_main, p_len, dtype=np.int64),
+                )
+                peer_chunks.append(cp)
+                local_chunks.append(cl)
+                length_chunks.append(coalesced_lengths)
 
         idx = layer["indexer"]
         if idx is not None and len(p_indexer_block_ids) != len(d_indexer_ids):
@@ -1010,7 +1026,7 @@ class MembPullReadThread(threading.Thread):
                 "n_main": n_main,
                 "n_indexer": n_indexer,
                 "num_transfers": len(local_ptrs),
-                "atomic_transfers": 2 * n_main + n_indexer,
+                "atomic_transfers": len(main_legs) * n_main + n_indexer,
             }
         return local_ptrs, peer_ptrs, lengths, info
 
@@ -1078,10 +1094,7 @@ class MembPullReadThread(threading.Thread):
                     main_start_block,
                 )
                 owns_requested_main = (
-                    group_member_idx == 0
-                    and layer["k_cpu_ptr"] is not None
-                    and layer["v_cpu_ptr"] is not None
-                    and owned_main_end > owned_main_start
+                    group_member_idx == 0 and _has_main_destination(layer) and owned_main_end > owned_main_start
                 )
                 owns_requested_indexer = (
                     layer["indexer"] is not None and read_info is not None and bool(read_info["d_indexer_ids"])

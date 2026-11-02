@@ -1012,10 +1012,12 @@ class AscendConfig:
 
     def _validate_sparse_packed_kv_offload_compatibility(self) -> None:
         if self.sparse_kv_offload_config.enabled and self.uses_packed_sfa_main_cache:
-            raise NotImplementedError(
-                "Sparse KV offload does not support packed SFA main caches (C8 or TQ4). "
-                "Sparse LI C8 is supported because the indexer cache remains device-resident."
-            )
+            if self.sparse_kv_offload_config.use_fused_copy_sfa or self.sparse_kv_offload_config.use_fused_overlap:
+                raise NotImplementedError(
+                    "Sparse KV offload packed SFA main caches (C8 or TQ4) cannot be combined with "
+                    "use_fused_copy_sfa or use_fused_overlap. "
+                    "Sparse LI C8 is supported because the indexer cache remains device-resident."
+                )
 
     @classmethod
     def _check_mooncake_c8_kv_cache_quant(cls, vllm_config: VllmConfig) -> None:

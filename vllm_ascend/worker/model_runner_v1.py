@@ -5279,10 +5279,8 @@ class NPUModelRunner(GPUModelRunner):
                         v_tensor_size = int(kv_cache_tensor_size // v_tensor_split_factor)
                     if self.sparse_kv_offload_enabled:
                         assert self.use_sparse, "Sparse KV offload only support sparse attention."
-                        assert not current_packed_sfa_main_cache, (
-                            "Sparse KV offload do not support a packed SFA main cache."
-                        )
-                        assert v_tensor_size is not None
+                        # A packed SFA main cache has one byte row per token, so
+                        # the offload manager allocates a single main leg there.
                         for layer_name_inner in allocation_layers:
                             if "attn" in layer_name_inner and "linear_attn" not in layer_name_inner:
                                 kv_cache_raw_tensors[layer_name_inner] = (
@@ -5601,9 +5599,6 @@ class NPUModelRunner(GPUModelRunner):
                     current_packed_sfa_main_cache = kv_cache_spec_uses_packed_sfa_main_cache(current_kv_cache_spec)
                     if self.sparse_kv_offload_enabled:
                         assert self.use_sparse, "Sparse KV offload only support sparse attention."
-                        assert not current_packed_sfa_main_cache, (
-                            "Sparse KV offload do not support a packed SFA main cache."
-                        )
                         reshaped_tensors = reshape_kv_cache_tensors_for_sparse_kv_offload(
                             kv_cache_raw_tensors[layer_name],
                             current_kv_cache_spec,

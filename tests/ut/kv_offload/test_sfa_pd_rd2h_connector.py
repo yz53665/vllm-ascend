@@ -221,16 +221,17 @@ def _make_layer(
     *,
     has_indexer: bool = True,
 ) -> dict:
+    main_legs = []
+    if k_cpu_ptr is not None and v_cpu_ptr is not None:
+        main_legs = [
+            {"p_base": 1000, "p_len": 10, "d_base": k_cpu_ptr, "d_len": 10, "topk_base": None},
+            {"p_base": 2000, "p_len": 20, "d_base": v_cpu_ptr, "d_len": 20, "topk_base": None},
+        ]
     return {
         "layer_name": "model.layers.0.self_attn",
         "pool_idx": 0,
         "offload_id": 0,
-        "p_k_base": 1000,
-        "p_v_base": 2000,
-        "p_k_len": 10,
-        "p_v_len": 20,
-        "k_cpu_ptr": k_cpu_ptr,
-        "v_cpu_ptr": v_cpu_ptr,
+        "main_legs": main_legs,
         "indexer": (
             {
                 "p_dsa_base": 7000,
@@ -241,6 +242,39 @@ def _make_layer(
             if has_indexer
             else None
         ),
+        "scale": None,
+    }
+
+
+def _make_copy_sfa_layer(
+    p_k_len: int,
+    p_v_len: int,
+    *,
+    k_cpu_ptr: int | None = None,
+    v_cpu_ptr: int | None = None,
+) -> dict:
+    """Two-leg BF16 layer with top-k buffers bound for fused_copy_sfa D2D."""
+    return {
+        "layer_name": "model.layers.0.self_attn",
+        "pool_idx": 0,
+        "offload_id": 0,
+        "main_legs": [
+            {"p_base": 1000, "p_len": p_k_len, "d_base": k_cpu_ptr, "d_len": p_k_len, "topk_base": 100_000},
+            {"p_base": 2000, "p_len": p_v_len, "d_base": v_cpu_ptr, "d_len": p_v_len, "topk_base": 200_000},
+        ],
+        "indexer": None,
+        "scale": None,
+    }
+
+
+def _make_packed_layer(d_cpu_ptr: int) -> dict:
+    """Packed one-leg SFA main cache (C8/TurboQuant row bytes)."""
+    return {
+        "layer_name": "model.layers.0.self_attn",
+        "pool_idx": 0,
+        "offload_id": 0,
+        "main_legs": [{"p_base": 1000, "p_len": 64, "d_base": d_cpu_ptr, "d_len": 64, "topk_base": None}],
+        "indexer": None,
         "scale": None,
     }
 
@@ -307,8 +341,81 @@ def test_non_tp0_resolves_broadcast_main_gva_without_cpu_tensor():
     )
 
     assert layer is not None
-    assert layer["k_cpu_ptr"] == 3000
-    assert layer["v_cpu_ptr"] == 4000
+    assert [leg["d_base"] for leg in layer["main_legs"]] == [3000, 4000]
+
+
+def test_resolve_read_layer_accepts_packed_single_main_leg():
+    thread = _make_read_thread()
+    layer_name = "model.layers.0.self_attn"
+    thread._state.main_name_to_idx = {layer_name: 0}
+    thread._state.main_gva_bases = [(3000,)]
+    thread._state.main_block_lens = [(64,)]
+    thread._state.indexer_tensors = [None]
+    thread._state.indexer_scale_tensors = [None]
+
+    layer = thread._resolve_read_layer(
+        layer_name,
+        {
+            layer_name: {
+                "base_addrs": [1000],
+                "block_len": [64],
+                "block_size_scale": [1],
+                "main_tensor_count": 1,
+                "has_indexer": False,
+            }
+        },
+    )
+
+    assert layer is not None
+    assert len(layer["main_legs"]) == 1
+    leg = layer["main_legs"][0]
+    assert leg["d_base"] == 3000
+    assert leg["p_len"] == leg["d_len"] == 64
+    assert leg["topk_base"] is None
+
+
+def test_resolve_read_layer_rejects_main_leg_count_mismatch():
+    thread = _make_read_thread()
+    layer_name = "model.layers.0.self_attn"
+    thread._state.main_name_to_idx = {layer_name: 0}
+    thread._state.main_gva_bases = [(3000, 4000)]
+    thread._state.main_block_lens = [(10, 20)]
+    thread._state.indexer_tensors = [None]
+    thread._state.indexer_scale_tensors = [None]
+
+    with pytest.raises(RuntimeError, match=r"main leg count mismatch.*P=1, D bases=2"):
+        thread._resolve_read_layer(
+            layer_name,
+            {
+                layer_name: {
+                    "base_addrs": [1000],
+                    "block_len": [10],
+                    "block_size_scale": [1],
+                    "main_tensor_count": 1,
+                    "has_indexer": False,
+                }
+            },
+        )
+
+
+def test_read_descriptors_emit_single_packed_main_leg():
+    thread = _make_read_thread()
+    thread._state.dest_blocks_by_req["req-0"] = ([3], [])
+
+    local, peer, lengths, info = thread._build_req_descriptors(
+        _make_packed_layer(3000),
+        "req-0",
+        p_main_block_ids=[1],
+        p_indexer_block_ids=[],
+        want_info=True,
+    )
+
+    assert local == [3000 + 3 * 64]
+    assert peer == [1000 + 64]
+    assert lengths == [64]
+    assert info is not None
+    assert info["n_main"] == 1
+    assert info["atomic_transfers"] == 1
 
 
 @pytest.mark.parametrize(
@@ -1645,6 +1752,39 @@ def test_consumer_worker_records_copy_sfa_slot_for_runner():
     assert dense_dest.kv_tokens == 4096
 
 
+def test_consumer_registers_local_pull_destinations():
+    """Pull mode lands reads in the consumer's own memory, so every local
+    destination has to be registered before the read thread starts: device_urma
+    resolves each local address against this rank's registration table."""
+    worker = SFAPDRD2HConsumerWorker.__new__(SFAPDRD2HConsumerWorker)
+    worker.kv_cache_config = SimpleNamespace(num_blocks=4)
+    worker._main_names = ["model.layers.0.self_attn", "model.layers.1.self_attn"]
+    worker._main_gva_bases = [(0x1000, 0x2000), (0x3000, 0x4000)]
+    worker._main_block_lens = [(128, 64), (128, 64)]
+    worker._indexer_tensors = [None, None]
+    worker._indexer_scale_tensors = [None, None]
+    worker.dspark_draft_layer_names = ()
+    worker._topk_k_bases = []
+    worker.offload_manager = MagicMock()
+    empty_hbm_regions = SimpleNamespace(ptrs=[], lengths=[], logical_tensor_count=0, logical_total_bytes=0)
+    with (
+        patch(
+            "vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.worker."
+            "collect_storage_merged_register_regions",
+            return_value=empty_hbm_regions,
+        ),
+        patch(
+            "vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.worker.global_memfabric_te.register_buffer"
+        ) as register_buffer,
+    ):
+        worker._register_pull_destinations({})
+
+    register_buffer.assert_called_once_with(
+        [0x1000, 0x2000, 0x3000, 0x4000],
+        [128 * 4, 64 * 4, 128 * 4, 64 * 4],
+    )
+
+
 def test_connector_exposes_copy_sfa_slot_bindings():
     connector = SfaRemoteD2HConnector.__new__(SfaRemoteD2HConnector)
     connector.connector_worker = SimpleNamespace(copy_sfa_slots_by_req={"req-a": 2})
@@ -1666,9 +1806,7 @@ def _make_tail_read_thread(*, tp_rank: int = 0, tp_size: int = 1) -> MembPullRea
 
 
 def test_copy_sfa_tail_d2d_appends_to_every_decode_rank():
-    layer = _make_layer(k_cpu_ptr=None, v_cpu_ptr=None, has_indexer=False)
-    layer["p_k_len"] = 1280
-    layer["p_v_len"] = 2560
+    layer = _make_copy_sfa_layer(1280, 2560)
     thread = _make_tail_read_thread()
 
     local, peer, lengths, _ = thread._build_req_descriptors(
@@ -1686,9 +1824,7 @@ def test_copy_sfa_tail_d2d_appends_to_every_decode_rank():
 
 
 def test_copy_sfa_tail_d2d_skips_when_last_block_is_not_in_chunk():
-    layer = _make_layer(k_cpu_ptr=3000, v_cpu_ptr=4000, has_indexer=False)
-    layer["p_k_len"] = 1280
-    layer["p_v_len"] = 2560
+    layer = _make_copy_sfa_layer(1280, 2560, k_cpu_ptr=3000, v_cpu_ptr=4000)
     thread = _make_tail_read_thread()
     thread._state.copy_sfa_tail_by_req["req-0"] = CopySfaTailDest(pool_slot=1, tail_tokens=3, tail_block_index=8)
     thread._state.dest_blocks_by_req["req-0"] = ([0], [])
@@ -1726,9 +1862,7 @@ def _make_dense_read_thread() -> MembPullReadThread:
 
 
 def test_copy_sfa_dense_d2d_copies_all_prompt_blocks_into_row():
-    layer = _make_layer(k_cpu_ptr=None, v_cpu_ptr=None, has_indexer=False)
-    layer["p_k_len"] = 1280
-    layer["p_v_len"] = 2560
+    layer = _make_copy_sfa_layer(1280, 2560)
     thread = _make_dense_read_thread()
 
     local, peer, lengths, _ = thread._build_req_descriptors(
@@ -1747,9 +1881,7 @@ def test_copy_sfa_dense_d2d_copies_all_prompt_blocks_into_row():
 
 
 def test_copy_sfa_dense_d2d_skips_chunk_outside_prompt_blocks():
-    layer = _make_layer(k_cpu_ptr=None, v_cpu_ptr=None, has_indexer=False)
-    layer["p_k_len"] = 1280
-    layer["p_v_len"] = 2560
+    layer = _make_copy_sfa_layer(1280, 2560)
     thread = _make_dense_read_thread()
 
     # The chunk carries blocks 3..4 but the 200-token prompt only owns blocks

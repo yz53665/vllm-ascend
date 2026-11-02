@@ -68,6 +68,7 @@ from vllm_ascend.distributed.kv_transfer.utils.utils import (
     validate_register_region_count,
 )
 from vllm_ascend.spec_decode.dspark_utils import get_dspark_aux_layer_ids
+from vllm_ascend.utils import kv_cache_spec_uses_packed_sfa_main_cache
 
 if TYPE_CHECKING:
     from vllm.v1.attention.backend import AttentionMetadata
@@ -476,23 +477,26 @@ class SFAPDRD2HConsumerWorker:
         if draft_names:
             self.dspark_draft_kv_metadata = build_draft_kv_metadata(self.kv_cache_config, kv_caches)
 
-        # Store layer info for MembPullReadThread
+        # Store layer info for MembPullReadThread. Each layer exposes one or two
+        # main legs (1 for a packed SFA main cache, 2 for BF16 K/V) and the
+        # read thread matches them against the producer's advertised count.
         self._main_names = main_names
         self._main_name_to_idx = {n: i for i, n in enumerate(main_names)}
-        k_caches_cpu = self.offload_manager.k_caches_cpu
-        v_caches_cpu = self.offload_manager.v_caches_cpu
-        gvas_k = self.offload_manager.gvas_k_bases
-        gvas_v = self.offload_manager.gvas_v_bases
-        if len(gvas_k) != len(main_names) or len(gvas_v) != len(main_names):
-            raise RuntimeError("SparseKVOffloadManager shared CPU GVA/layer count mismatch")
-        self._main_gva_bases = list(zip(gvas_k, gvas_v))
-        self._main_block_lens = self.offload_manager.cpu_block_lens
-        if len(self._main_block_lens) != len(main_names):
-            raise RuntimeError("SparseKVOffloadManager shared CPU block-size/layer count mismatch")
+        main_leg_count = self.offload_manager.main_leg_count
+        if main_leg_count not in (1, 2):
+            raise RuntimeError(f"SparseKVOffloadManager reports unsupported main leg count {main_leg_count}")
+        self._main_gva_bases = [
+            tuple(int(base) for base in self.offload_manager.main_gva_bases(layer_id))
+            for layer_id in range(len(main_names))
+        ]
+        self._main_block_lens = [
+            tuple(int(length) for length in self.offload_manager.main_block_lens(layer_id))
+            for layer_id in range(len(main_names))
+        ]
         if self.tp_rank == 0:
-            if len(k_caches_cpu) != len(main_names) or len(v_caches_cpu) != len(main_names):
-                raise RuntimeError("SparseKVOffloadManager CPU pool/layer count mismatch")
-            self._cpu_pools = list(zip(k_caches_cpu, v_caches_cpu))
+            self._cpu_pools = [
+                tuple(self.offload_manager.main_cpu_pools(layer_id)) for layer_id in range(len(main_names))
+            ]
         else:
             self._cpu_pools = [None] * len(main_names)
         self._indexer_tensors = []
@@ -515,13 +519,9 @@ class SFAPDRD2HConsumerWorker:
             indexer_scale_t = self._indexer_scale_tensors[pool_idx]
             cpu_pool = self._cpu_pools[pool_idx]
             if cpu_pool is not None:
-                k_cpu, v_cpu = cpu_pool
-                addrs = [k_cpu.data_ptr(), v_cpu.data_ptr()]
-                block_lens = [
-                    k_cpu.element_size() * math.prod(k_cpu.shape[1:]),
-                    v_cpu.element_size() * math.prod(v_cpu.shape[1:]),
-                ]
-                scales = [k_cpu.shape[0] // num_blocks, v_cpu.shape[0] // num_blocks]
+                addrs = [int(pool.data_ptr()) for pool in cpu_pool]
+                block_lens = [pool.element_size() * math.prod(pool.shape[1:]) for pool in cpu_pool]
+                scales = [pool.shape[0] // num_blocks for pool in cpu_pool]
             else:
                 addrs, block_lens, scales = [], [], []
             groups = [main_group_idx] * len(addrs)
@@ -540,7 +540,7 @@ class SFAPDRD2HConsumerWorker:
                 kv_caches_base_addr=addrs,
                 block_len=block_lens,
                 block_size_scale=scales,
-                main_tensor_count=2 if cpu_pool is not None else 0,
+                main_tensor_count=len(addrs) - int(indexer_t is not None) - int(indexer_scale_t is not None),
                 has_indexer=indexer_t is not None,
             )
 
@@ -892,10 +892,15 @@ class SFAPDRD2HProducerWorker:
             layer_meta = LayerMetadata([], [], [], [])
             _append_cache_tensors(layer_meta, target_caches[main_name], layer2group_ids[main_name])
             layer_meta.main_tensor_count = len(layer_meta.kv_caches_base_addr)
-            if layer_meta.main_tensor_count != 2:
+            main_group_id = layer2group_ids[main_name]
+            expected_main_tensor_count = (
+                1 if kv_cache_spec_uses_packed_sfa_main_cache(self.kv_cache_specs[main_group_id]) else 2
+            )
+            if layer_meta.main_tensor_count != expected_main_tensor_count:
                 raise RuntimeError(
-                    f"SFAPD producer layer {main_name} must expose main K/V tensors, "
-                    f"got {layer_meta.main_tensor_count} tensor(s)"
+                    f"SFAPD producer layer {main_name} exposes {layer_meta.main_tensor_count} "
+                    f"main tensor(s), expected {expected_main_tensor_count} for "
+                    f"{'a packed SFA main cache' if expected_main_tensor_count == 1 else 'a BF16 K/V cache'}"
                 )
             indexer_name = indexer_by_layer.get(physical_idx)
             if indexer_name is not None:

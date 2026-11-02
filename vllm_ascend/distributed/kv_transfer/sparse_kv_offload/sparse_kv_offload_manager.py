@@ -32,13 +32,16 @@ from vllm.v1.utils import CpuGpuBuffer
 
 from vllm_ascend.ascend_config import SparseKVOffloadConfig, get_ascend_config
 from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.copy_sfa_topk_slots import copy_sfa_pool_capacity
-from vllm_ascend.utils import load_custom_ops_library
+from vllm_ascend.utils import kv_cache_spec_uses_packed_sfa_main_cache, load_custom_ops_library
 from vllm_ascend.device.hardware_profile import HardwareCapability, get_current_hardware_profile
 
-# Main BF16 cache:
+# Main KV cache:
 # [k_cache, v_cache, k_cache_cpu, v_cache_cpu, topk_buffer_k, topk_buffer_v].
-# Sparse LI C8 indexer caches are separate and
-# remain device-resident, so they are not registered with this manager.
+# A BF16 main cache fills all six slots. A packed SFA main cache (C8 or TQ4)
+# stores one byte row per token, so the V slots alias the K slots and the
+# offload kernels keep their K/V-pair contract by copying the same row twice.
+# Sparse LI C8 indexer caches are separate and remain device-resident, so they
+# are not registered with this manager.
 OFFLOAD_KV_CACHE_TUPLE_LEN = 6
 OFFLOAD_K_CACHE_NPU_INDEX = 0
 OFFLOAD_V_CACHE_NPU_INDEX = 1
@@ -109,9 +112,29 @@ def _sparse_kv_ops():
     return _SPARSE_KV_OFFLOAD_OPS
 
 
+def packed_sfa_main_row_bytes(kv_cache_spec: KVCacheSpec) -> int:
+    """Return the byte width of one packed SFA main-cache token row."""
+    if not kv_cache_spec_uses_packed_sfa_main_cache(kv_cache_spec):
+        raise ValueError("packed_sfa_main_row_bytes requires a packed SFA main cache spec")
+    if int(getattr(kv_cache_spec, "tokens_per_state", 1)) != 1:
+        raise ValueError("Sparse KV offload packed SFA caches require tokens_per_state == 1")
+    if kv_cache_spec.page_size_bytes != kv_cache_spec.real_page_size_bytes:
+        raise ValueError("Sparse KV offload packed SFA caches require unpadded pages")
+    divisor = kv_cache_spec.block_size * kv_cache_spec.num_kv_heads
+    row_bytes = kv_cache_spec.real_page_size_bytes // divisor
+    if row_bytes * divisor != kv_cache_spec.real_page_size_bytes:
+        raise ValueError(
+            "Sparse KV offload packed SFA page is not an integral number of token rows: "
+            f"page={kv_cache_spec.real_page_size_bytes}, block_size={kv_cache_spec.block_size}, "
+            f"num_kv_heads={kv_cache_spec.num_kv_heads}"
+        )
+    return row_bytes
+
+
 def allocate_kv_offload_topk_buffer_pair(
     vllm_config: VllmConfig,
     sparse_kv_offload_config: SparseKVOffloadConfig,
+    packed_row_bytes: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     decode_width = 1
     if vllm_config.speculative_config is not None:
@@ -119,12 +142,25 @@ def allocate_kv_offload_topk_buffer_pair(
 
     topk_buffer_size = sparse_kv_offload_config.topk_buffer_size
     num_kv_heads = 1  # sparse kv offload only support sfa(mla) now.
-    k_dim = vllm_config.model_config.hf_text_config.kv_lora_rank
-    v_dim = vllm_config.model_config.hf_text_config.qk_rope_head_dim
     max_num_topk_rows = min(
         vllm_config.scheduler_config.max_num_batched_tokens,
         vllm_config.scheduler_config.max_num_seqs * decode_width,
     )
+    if packed_row_bytes is not None:
+        if sparse_kv_offload_config.use_fused_copy_sfa or sparse_kv_offload_config.use_fused_overlap:
+            raise NotImplementedError(
+                "Sparse KV offload packed SFA main caches cannot be combined with "
+                "use_fused_copy_sfa or use_fused_overlap"
+            )
+        # A packed row already carries both latent halves and its scales, so one
+        # byte buffer serves as both the K and the V resident row.
+        topk_buffer_bytes = max_num_topk_rows * topk_buffer_size * num_kv_heads * packed_row_bytes
+        topk_buffer = torch.empty(topk_buffer_bytes, dtype=torch.int8, device="npu").view(
+            [max_num_topk_rows, topk_buffer_size, num_kv_heads, packed_row_bytes]
+        )
+        return topk_buffer, topk_buffer
+    k_dim = vllm_config.model_config.hf_text_config.kv_lora_rank
+    v_dim = vllm_config.model_config.hf_text_config.qk_rope_head_dim
     if sparse_kv_offload_config.use_fused_copy_sfa:
         # The backend imports this manager; defer its layout constant import.
         from vllm_ascend.attention.sfa_kv_offload import COPY_SFA_TAIL_BLOCKS
@@ -171,8 +207,15 @@ def allocate_kv_offload_topk_profile_buffers(
     if num_offload_layers == 0:
         raise RuntimeError("Sparse KV offload profile did not find any host-resident SFA KV cache layers.")
 
+    host_specs = [spec for spec in kv_cache_spec.values() if getattr(spec, "store_on_host", False)]
+    packed_flags = [kv_cache_spec_uses_packed_sfa_main_cache(spec) for spec in host_specs]
+    if any(packed_flags) and not all(packed_flags):
+        raise ValueError("Sparse KV offload cannot mix packed and BF16 SFA main caches")
+    packed_row_bytes = packed_sfa_main_row_bytes(host_specs[0]) if all(packed_flags) else None
+
     buffers = [
-        allocate_kv_offload_topk_buffer_pair(vllm_config, sparse_kv_offload_config) for _ in range(num_offload_layers)
+        allocate_kv_offload_topk_buffer_pair(vllm_config, sparse_kv_offload_config, packed_row_bytes)
+        for _ in range(num_offload_layers)
     ]
     buffer_bytes = sum(tensor.numel() * tensor.element_size() for buffer_pair in buffers for tensor in buffer_pair)
     logger.info_once(
@@ -339,17 +382,20 @@ def get_sparse_kv_offload_cpu_pool_size_bytes(
 
 def allocate_kv_cache_tensors_for_sparse_kv_offload(
     k_tensor_size: int,
-    v_tensor_size: int,
+    v_tensor_size: int | None,
     alignment: int,
     tp_rank: int,
     keep_device_kv_cache: bool,
     npu_kv_cache_allocate_func: typing.Callable,
 ):
+    # A packed SFA main cache has a single byte row per token, so v_tensor_size
+    # is None there and the V slots stay empty (see OFFLOAD_KV_CACHE_TUPLE_LEN).
+    packed = v_tensor_size is None
+    sizes = [k_tensor_size] if packed else [k_tensor_size, v_tensor_size]
     if tp_rank == 0:
-        [k_tensor_cpu, v_tensor_cpu] = empty_aligned_int8_cpu_tensors(
-            [k_tensor_size, v_tensor_size],
-            alignment,
-        )
+        allocated_cpu = empty_aligned_int8_cpu_tensors(sizes, alignment)
+        k_tensor_cpu = allocated_cpu[0]
+        v_tensor_cpu = None if packed else allocated_cpu[1]
     else:
         k_tensor_cpu = None
         v_tensor_cpu = None
@@ -359,15 +405,13 @@ def allocate_kv_cache_tensors_for_sparse_kv_offload(
             k_tensor_size,
             alignment,
         )
-        v_tensor = npu_kv_cache_allocate_func(
-            v_tensor_size,
-            alignment,
-        )
+        v_tensor = None if packed else npu_kv_cache_allocate_func(v_tensor_size, alignment)
     else:
         k_tensor = None
         v_tensor = None
 
-    return (k_tensor, v_tensor, k_tensor_cpu, v_tensor_cpu, k_tensor_size + v_tensor_size)
+    total_tensor_size = k_tensor_size if packed else k_tensor_size + v_tensor_size
+    return (k_tensor, v_tensor, k_tensor_cpu, v_tensor_cpu, total_tensor_size)
 
 
 def reshape_kv_cache_tensors_for_sparse_kv_offload(
@@ -381,6 +425,29 @@ def reshape_kv_cache_tensors_for_sparse_kv_offload(
     raw_k_tensor, raw_v_tensor, raw_k_tensor_cpu, raw_v_tensor_cpu, sum_page_size_bytes = raw_cache_tensors
     assert sum_page_size_bytes % current_kv_cache_spec.page_size_bytes == 0
     num_blocks = sum_page_size_bytes // current_kv_cache_spec.page_size_bytes
+    if kv_cache_spec_uses_packed_sfa_main_cache(current_kv_cache_spec):
+        packed_row_bytes = packed_sfa_main_row_bytes(current_kv_cache_spec)
+        if raw_v_tensor is not None or raw_v_tensor_cpu is not None:
+            raise ValueError("Sparse KV offload packed SFA main cache must not allocate a separate V tensor")
+        packed_dtype = current_kv_cache_spec.dtype
+        dtype_size = packed_dtype.itemsize
+        if packed_row_bytes % dtype_size:
+            raise ValueError(
+                "Sparse KV offload packed SFA row is not an integral number of cache elements: "
+                f"row={packed_row_bytes}, dtype={packed_dtype}"
+            )
+        packed_shape = (
+            num_blocks,
+            current_kv_cache_spec.block_size,
+            current_kv_cache_spec.num_kv_heads,
+            packed_row_bytes // dtype_size,
+        )
+        k_cache = raw_k_tensor.view(packed_dtype).view(packed_shape) if raw_k_tensor is not None else None
+        k_cache_cpu = raw_k_tensor_cpu.view(packed_dtype).view(packed_shape) if raw_k_tensor_cpu is not None else None
+        topk_buffer_k, topk_buffer_v = allocate_kv_offload_topk_buffer_pair(
+            vllm_config, sparse_kv_offload_config, packed_row_bytes
+        )
+        return (k_cache, None, k_cache_cpu, None, topk_buffer_k, topk_buffer_v)
     kv_cache_shape = attn_backend.get_kv_cache_shape(
         num_blocks,
         current_kv_cache_spec.block_size,
@@ -523,6 +590,10 @@ class SparseKVOffloadManager:
         self.topk = sparse_kv_offload_config.topk
         self.use_fused_overlap = sparse_kv_offload_config.use_fused_overlap
         self.use_fused_copy_sfa = sparse_kv_offload_config.use_fused_copy_sfa
+        # Set by _register_offload_layers from the host-resident specs. A packed
+        # SFA main cache exposes one main leg per layer instead of BF16 K and V.
+        self.uses_packed_main_cache = False
+        self.packed_main_dtype: torch.dtype | None = None
 
         self.max_num_reqs = vllm_config.scheduler_config.max_num_seqs
         self.max_num_tokens = vllm_config.scheduler_config.max_num_batched_tokens
@@ -614,13 +685,30 @@ class SparseKVOffloadManager:
 
     def _register_offload_layers(self, kv_caches: dict[str, torch.Tensor]) -> None:
         host_layer_names = set()
+        host_packed_flags: set[bool] = set()
+        host_packed_dtypes: set[torch.dtype] = set()
         for group in self.kv_cache_config.kv_cache_groups:
             for layer_name in group.layer_names:
                 spec = group.kv_cache_spec
                 if isinstance(spec, UniformTypeKVCacheSpecs):
                     spec = spec.kv_cache_specs[layer_name]
                 if getattr(spec, "store_on_host", False):
+                    packed = kv_cache_spec_uses_packed_sfa_main_cache(spec)
                     host_layer_names.add(layer_name)
+                    host_packed_flags.add(packed)
+                    if packed:
+                        host_packed_dtypes.add(spec.dtype)
+        if len(host_packed_flags) > 1:
+            raise ValueError("Sparse KV offload cannot mix packed and BF16 SFA main caches")
+        self.uses_packed_main_cache = bool(host_packed_flags) and next(iter(host_packed_flags))
+        if len(host_packed_dtypes) > 1:
+            raise ValueError("Sparse KV offload requires one packed SFA main-cache dtype across host layers")
+        self.packed_main_dtype = next(iter(host_packed_dtypes)) if self.uses_packed_main_cache else None
+        if self.uses_packed_main_cache and (self.use_fused_copy_sfa or self.use_fused_overlap):
+            raise NotImplementedError(
+                "Sparse KV offload packed SFA main caches cannot be combined with "
+                "use_fused_copy_sfa or use_fused_overlap"
+            )
         self.offload_layer_names = [layer_name for layer_name in kv_caches if layer_name in host_layer_names]
         if not self.offload_layer_names:
             raise ValueError("Sparse KV offload did not find SFA KV cache layers.")
@@ -765,6 +853,34 @@ class SparseKVOffloadManager:
             )
         return self.k_caches_cpu[layer_id], self.v_caches_cpu[layer_id]
 
+    @property
+    def main_leg_count(self) -> int:
+        """Main-cache legs per layer: 1 for a packed row, 2 for BF16 K and V."""
+        return 1 if self.uses_packed_main_cache else 2
+
+    def main_cpu_pools(self, layer_id: int) -> tuple[torch.Tensor, ...]:
+        """Rank-local CPU destinations for every main leg of one layer."""
+        if self.tp_rank != 0:
+            return ()
+        k_pool = self.k_caches_cpu[layer_id]
+        if self.uses_packed_main_cache:
+            return (k_pool,)
+        return (k_pool, self.v_caches_cpu[layer_id])
+
+    def main_gva_bases(self, layer_id: int) -> tuple[int, ...]:
+        """Shared CPU pool base addresses for every main leg of one layer."""
+        k_base = int(self.gvas_k_bases[layer_id])
+        if self.uses_packed_main_cache:
+            return (k_base,)
+        return (k_base, int(self.gvas_v_bases[layer_id]))
+
+    def main_block_lens(self, layer_id: int) -> tuple[int, ...]:
+        """Per-block byte lengths for every main leg of one layer."""
+        k_len = int(self.cpu_block_lens[layer_id][0])
+        if self.uses_packed_main_cache:
+            return (k_len,)
+        return (k_len, int(self.cpu_block_lens[layer_id][1]))
+
     def register_kv_caches(
         self,
         kv_caches: dict[str, torch.Tensor],
@@ -795,7 +911,13 @@ class SparseKVOffloadManager:
         head_dim_v = self.topk_buffers_v[0].size(-1)
         dtype = self.topk_buffers_k[0].dtype
         assert kv_head_num == 1, "Sparse KV offload only support sfa(mla)"
-        if dtype != torch.bfloat16:
+        if self.uses_packed_main_cache:
+            if dtype != torch.int8:
+                raise ValueError(
+                    "Sparse KV offload packed SFA main caches require an int8 resident row, "
+                    f"got {dtype}"
+                )
+        elif dtype != torch.bfloat16:
             raise ValueError(
                 "Sparse KV offload requires a BF16 main SFA cache; sparse LI "
                 "C8 is supported only for the device-resident indexer cache."
@@ -863,7 +985,7 @@ class SparseKVOffloadManager:
         if self.tp_rank == 0:
             for layer_id in range(self.num_layers):
                 k_cpu = self.k_caches_cpu[layer_id]
-                v_cpu = self.v_caches_cpu[layer_id]
+                v_cpu = k_cpu if self.uses_packed_main_cache else self.v_caches_cpu[layer_id]
                 gvas_k_tensor[layer_id] = k_cpu.data_ptr()
                 gvas_v_tensor[layer_id] = v_cpu.data_ptr()
                 cpu_block_lens_tensor[layer_id, 0] = (
@@ -873,7 +995,8 @@ class SparseKVOffloadManager:
                     v_cpu.numel() * v_cpu.element_size() // self.kv_cache_config.num_blocks
                 )
             shape_k_tensor.copy_(torch.tensor(self.k_caches_cpu[0].shape, dtype=torch.int64, device="npu"))
-            shape_v_tensor.copy_(torch.tensor(self.v_caches_cpu[0].shape, dtype=torch.int64, device="npu"))
+            shape_v_source = self.k_caches_cpu[0] if self.uses_packed_main_cache else self.v_caches_cpu[0]
+            shape_v_tensor.copy_(torch.tensor(shape_v_source.shape, dtype=torch.int64, device="npu"))
         self.tp_group.broadcast(gvas_k_tensor, src=0)
         self.tp_group.broadcast(gvas_v_tensor, src=0)
         self.tp_group.broadcast(cpu_block_lens_tensor, src=0)
