@@ -241,3 +241,4 @@ csrc/third_party/
 .trae/
 logs
 examples/glm_sfa/
+*.html
