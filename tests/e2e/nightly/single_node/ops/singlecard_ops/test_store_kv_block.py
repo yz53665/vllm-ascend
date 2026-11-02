@@ -126,9 +126,9 @@ def test_myops_fp8_key_float32_scale(num_tokens, num_head, block_size, num_block
     scale = torch.rand((num_tokens, 1), dtype=torch.float32)
 
     key_cache_expect = key_cache.clone()
-    key_cache_expect.view(-1, num_head, head_size_k)[2:2 + num_tokens] = key
+    key_cache_expect.view(-1, num_head, head_size_k)[2:2 + num_tokens] = key.view(num_tokens, num_head, head_size_k)
     scale_cache_expect = scale_cache.clone()
-    scale_cache_expect.view(-1, num_head, 1)[2:2 + num_tokens] = scale
+    scale_cache_expect.view(-1, num_head, 1)[2:2 + num_tokens] = scale.view(num_tokens, num_head, 1)
 
     key_npu = key.npu()
     key_cache_npu = key_cache.npu()

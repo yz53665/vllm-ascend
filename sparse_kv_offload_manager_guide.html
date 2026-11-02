@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SparseKVOffloadManager 深度图解 · vLLM-Ascend</title>
+<style>
+:root{
+  --bg:#080d1a;
+  --bg2:#0c1324;
+  --panel:#111a30;
+  --panel2:#16203c;
+  --ink:#e9eefb;
+  --muted:#98a6c8;
+  --line:#26355a;
+  --accent:#5ee7ff;
+  --accent-soft:rgba(94,231,255,.14);
+  --violet:#a78bfa;
+  --violet-soft:rgba(167,139,250,.14);
+  --ok:#36d399;
+  --warn:#fbbf24;
+  --bad:#fb7185;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:var(--sans);
+  color:var(--ink);
+  background:
+    radial-gradient(1100px 600px at 12% -8%, rgba(94,231,255,.10), transparent 60%),
+    radial-gradient(900px 520px at 88% 4%, rgba(167,139,250,.12), transparent 62%),
+    linear-gradient(180deg,#080d1a 0%,#070b16 100%);
+  background-attachment:fixed;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+#progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:99;
+  background:linear-gradient(90deg,var(--accent),var(--violet));box-shadow:0 0 12px rgba(94,231,255,.5)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 26px}
+
+/* ---------- hero ---------- */
+.hero{padding:86px 0 26px;position:relative;overflow:hidden}
+.hero::after{content:"";position:absolute;inset:auto 0 0 0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(94,231,255,.4),transparent)}
+.kicker{font:600 12px/1 var(--mono);letter-spacing:.28em;color:var(--accent);text-transform:uppercase}
+.hero h1{font-size:clamp(30px,4.4vw,54px);line-height:1.12;margin:18px 0 14px;letter-spacing:-.02em}
+.hero h1 .g{background:linear-gradient(100deg,#eaf6ff 10%,var(--accent) 55%,var(--violet) 95%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .sub{max-width:820px;color:var(--muted);font-size:16.5px}
+.chips{display:flex;flex-wrap:wrap;gap:9px;margin-top:22px}
+.chip{font:500 12.5px/1 var(--mono);padding:9px 13px;border-radius:999px;
+  border:1px solid var(--line);background:rgba(255,255,255,.03);color:#c3d0ee}
+.chip b{color:var(--accent);font-weight:600}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:34px}
+.fact{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);
+  border-radius:16px;padding:16px 18px;position:relative;overflow:hidden}
+.fact::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,var(--accent),var(--violet));opacity:.75}
+.fact h4{margin:0 0 6px;font-size:13px;letter-spacing:.06em;color:var(--accent);font-weight:600}
+.fact p{margin:0;font-size:13.5px;color:var(--muted)}
+.fact p strong{color:#e6edfb;font-weight:600}
+
+/* ---------- nav ---------- */
+nav.toc{position:sticky;top:0;z-index:40;background:rgba(8,13,26,.78);
+  backdrop-filter:blur(14px);border-bottom:1px solid rgba(38,53,90,.7)}
+nav.toc .wrap{display:flex;gap:4px;overflow-x:auto;padding:9px 26px;scrollbar-width:none}
+nav.toc .wrap::-webkit-scrollbar{display:none}
+nav.toc a{white-space:nowrap;text-decoration:none;color:#93a2c4;font-size:12.5px;
+  padding:7px 11px;border-radius:9px;border:1px solid transparent;transition:.2s}
+nav.toc a:hover{color:#eaf6ff;background:rgba(94,231,255,.07)}
+nav.toc a.on{color:#eaf6ff;border-color:rgba(94,231,255,.35);background:rgba(94,231,255,.1)}
+
+/* ---------- sections ---------- */
+main{padding:26px 0 90px}
+section{scroll-margin-top:72px;padding:44px 0 8px}
+.sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}
+.sec-num{font:700 13px/1 var(--mono);color:var(--accent);letter-spacing:.14em;
+  padding:6px 9px;border:1px solid rgba(94,231,255,.3);border-radius:8px;background:rgba(94,231,255,.06)}
+.sec-head h2{font-size:clamp(21px,2.5vw,30px);margin:0;letter-spacing:-.01em}
+.lead{color:var(--muted);max-width:900px;margin:0 0 20px;font-size:15px}
+.lead b{color:#e6edfb}
+
+.card{background:linear-gradient(180deg,rgba(22,32,60,.9),rgba(12,19,36,.9));
+  border:1px solid var(--line);border-radius:18px;padding:20px 22px}
+.card h3{margin:2px 0 10px;font-size:16px;letter-spacing:.01em}
+.card h3 small{color:var(--muted);font-weight:400;font-size:12px;margin-left:8px;font-family:var(--mono)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:860px){.grid2,.grid3{grid-template-columns:1fr}}
+
+.note{border-left:3px solid var(--violet);background:var(--violet-soft);
+  border-radius:0 12px 12px 0;padding:12px 16px;font-size:13.5px;color:#cbd6f2}
+.note.warn{border-color:var(--warn);background:rgba(251,191,36,.1)}
+.note.bad{border-color:var(--bad);background:rgba(251,113,133,.1)}
+.note b{color:#fff}
+.note code{background:rgba(0,0,0,.35);padding:1px 6px;border-radius:5px;font-family:var(--mono);font-size:12px}
+
+pre.code{background:#070c17;border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+  overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#c8d5f2;margin:12px 0}
+pre.code .c{color:#5f7099}
+pre.code .k{color:#a78bfa}
+pre.code .s{color:#7ee3b8}
+pre.code .f{color:#5ee7ff}
+code.inl{font-family:var(--mono);font-size:12px;background:rgba(94,231,255,.08);
+  border:1px solid rgba(94,231,255,.18);border-radius:5px;padding:1px 6px;color:#cfefff}
+
+/* ---------- diagram shell ---------- */
+.diagram{border:1px solid var(--line);border-radius:18px;padding:10px;
+  background:radial-gradient(900px 400px at 20% 0%,rgba(94,231,255,.07),transparent 70%),
+    linear-gradient(180deg,#0d1528,#080e1c);overflow-x:auto}
+.diagram svg{display:block;width:100%;height:auto;min-width:760px}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:7px 20px;margin-top:14px;font-size:12.5px;color:var(--muted)}
+@media(max-width:760px){.legend{grid-template-columns:1fr}}
+.legend i{display:inline-flex;width:19px;height:19px;align-items:center;justify-content:center;
+  border-radius:50%;background:rgba(94,231,255,.12);border:1px solid rgba(94,231,255,.35);
+  color:#cfefff;font:600 11px/1 var(--mono);font-style:normal;margin-right:8px}
+.legend b{color:#e6edfb;font-weight:600}
+.legend span{display:block}
+
+/* svg primitives */
+.box{fill:#121b31;stroke:#2b3b62;stroke-width:1.4}
+.box.hl{fill:#14233a;stroke:rgba(94,231,255,.55)}
+.t1{fill:#eaf3ff;font:600 13px/1 var(--sans)}
+.t2{fill:#9fb0d4;font:11.5px/1 var(--mono)}
+.t3{fill:#7f90b6;font:11px/1 var(--sans)}
+.t4{fill:#5ee7ff;font:600 11px/1 var(--mono)}
+.axis{stroke:#2a3a60;stroke-width:1}
+.flow{stroke:#5ee7ff;stroke-width:1.7;fill:none;stroke-dasharray:9 7;animation:dash 1.2s linear infinite}
+.wire{stroke:#3a4c78;stroke-width:1.5;fill:none}
+.wire.v{stroke:#a78bfa}
+@keyframes dash{to{stroke-dashoffset:-32}}
+.pulse{animation:pulse 2.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+
+/* ---------- bars / comparison ---------- */
+.cmp{display:grid;gap:14px;margin-top:6px}
+.cmp-row{display:grid;grid-template-columns:150px 1fr 120px;gap:12px;align-items:center}
+.cmp-row .lb{font-size:12.5px;color:#c6d2ee}
+.track{height:34px;border-radius:10px;background:#0a1020;border:1px solid var(--line);overflow:hidden;display:flex}
+.seg{height:100%;display:flex;align-items:center;justify-content:center;font:600 11px/1 var(--mono);
+  color:#03121a;white-space:nowrap;transition:width .5s ease}
+.seg.kv{background:linear-gradient(90deg,#ff9db1,#fb7185);color:#2b0710}
+.seg.hot{background:linear-gradient(90deg,#5ee7ff,#7ee3b8);color:#03201f}
+.seg.dev{background:linear-gradient(90deg,#a78bfa,#7c6cf0);color:#100a2a}
+@media(max-width:760px){.cmp-row{grid-template-columns:100px 1fr 90px}}
+
+/* ---------- 6 tuple ---------- */
+.tuple{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:6px}
+@media(max-width:820px){.tuple{grid-template-columns:repeat(3,1fr)}}
+.slot{position:relative;border:1px solid var(--line);border-radius:12px;padding:12px 10px;
+  background:#0d1527;text-align:center;transition:.25s}
+.slot .idx{position:absolute;top:6px;left:8px;font:600 10px/1 var(--mono);color:#61729b}
+.slot .nm{font:600 13px/1.3 var(--mono);color:#dff2ff;margin-top:10px}
+.slot .dv{font-size:11px;color:var(--muted);margin-top:4px}
+.slot.npu{border-color:rgba(94,231,255,.35);box-shadow:inset 0 0 22px rgba(94,231,255,.06)}
+.slot.cpu{border-color:rgba(167,139,250,.35);box-shadow:inset 0 0 22px rgba(167,139,250,.06)}
+.slot.hot{border-color:rgba(126,227,184,.35);box-shadow:inset 0 0 22px rgba(126,227,184,.06)}
+.slot.alias::after{content:"= K 槽位别名";position:absolute;right:8px;bottom:6px;font:600 10px/1 var(--mono);color:var(--warn)}
+
+/* ---------- timeline ---------- */
+.timeline{position:relative;padding-left:38px;margin-top:8px}
+.timeline::before{content:"";position:absolute;left:13px;top:12px;bottom:14px;width:2px;
+  background:linear-gradient(180deg,var(--accent),rgba(167,139,250,.5),transparent)}
+.tl{position:relative;margin-bottom:22px}
+.tl::before{content:"";position:absolute;left:-31px;top:6px;width:12px;height:12px;border-radius:50%;
+  background:radial-gradient(circle at 35% 35%,#9ef4ff,#2b8fa8);box-shadow:0 0 0 4px rgba(94,231,255,.12)}
+.tl h4{margin:0 0 4px;font-size:14.5px}
+.tl .fn{font:600 11.5px/1.5 var(--mono);color:var(--accent)}
+.tl p{margin:5px 0 0;font-size:13.2px;color:var(--muted)}
+.tl p b{color:#e6edfb}
+
+/* args buffer */
+.argsbuf{display:flex;height:52px;border-radius:12px;overflow:hidden;border:1px solid var(--line);margin-top:12px}
+.argsbuf div{display:flex;flex-direction:column;justify-content:center;align-items:center;
+  font:600 11px/1.5 var(--mono);border-right:1px solid rgba(0,0,0,.35)}
+.argsbuf div:last-child{border-right:none}
+.ab1{background:linear-gradient(180deg,#1d3550,#142639);color:#bfe9ff;flex:16}
+.ab2{background:linear-gradient(180deg,#243052,#182140);color:#cfd9ff;flex:16}
+.ab3{background:linear-gradient(180deg,#2a2947,#1d1c36);color:#d9d0ff;flex:8}
+.ab4{background:linear-gradient(180deg,#173a33,#0f2a26);color:#b8f2dc;flex:4}
+.argsbuf small{font-size:9.5px;color:#8fa2c4;font-weight:400}
+
+/* ---------- sequence ---------- */
+.seq-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0 0}
+.btn{cursor:pointer;font:600 12.5px/1 var(--sans);color:#dff4ff;background:rgba(94,231,255,.1);
+  border:1px solid rgba(94,231,255,.35);padding:9px 15px;border-radius:10px;transition:.18s}
+.btn:hover{background:rgba(94,231,255,.2);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn.ghost{background:transparent;border-color:var(--line);color:#a7b6d8}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.seq-count{font:600 12px/1 var(--mono);color:var(--muted);margin-left:auto}
+#seqSvg .msg{opacity:.55;transition:opacity .25s}
+#seqSvg .msg.active{opacity:1}
+#seqSvg .msg.active .line{stroke:#5ee7ff;stroke-width:2.6}
+#seqSvg .msg.active .lbl{fill:#ffffff}
+#seqSvg .msg.active .badge{fill:#5ee7ff;stroke:#5ee7ff}
+#seqSvg .msg.active .badge-t{fill:#04121c}
+#seqSvg .line{stroke:#7b8db4;stroke-width:1.6}
+#seqSvg .line.ret{stroke-dasharray:6 5;stroke:#a78bfa}
+#seqSvg .line.data{stroke:#7ee3b8}
+#seqSvg .lbl{fill:#aebdd9;font:11.5px/1 var(--sans)}
+#seqSvg .badge{fill:#0e1830;stroke:#38507d;stroke-width:1}
+#seqSvg .badge-t{fill:#9fb3d8;font:600 11px/1 var(--mono)}
+#seqSvg .lane-t{fill:#e7f0ff;font:600 12px/1 var(--sans)}
+#seqSvg .lane-s{fill:#8798bd;font:10.5px/1 var(--mono)}
+#seqSvg .life{stroke:#243357;stroke-width:1.2;stroke-dasharray:5 6}
+.detail{margin-top:16px;border:1px solid var(--line);border-radius:14px;padding:16px 18px;
+  background:linear-gradient(180deg,#101a2f,#0a1120)}
+.detail .h{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+.detail .h .n{font:700 11px/1 var(--mono);color:#04121c;background:var(--accent);padding:5px 8px;border-radius:6px}
+.detail .h h4{margin:0;font-size:14px;color:#eaf6ff}
+.detail p{margin:0;font-size:13.2px;color:var(--muted)}
+.detail p b{color:#e6edfb}
+
+/* ---------- streams ---------- */
+.streams{display:grid;gap:9px;margin-top:8px}
+.srow{display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center}
+.sname{font:600 11px/1.4 var(--mono);color:#a7b6d8}
+.strack{position:relative;height:30px;border-radius:9px;background:#0a1020;border:1px solid var(--line);
+  overflow:hidden}
+.blk{position:absolute;top:4px;bottom:4px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+  font:600 10.5px/1 var(--mono);color:#04121c;white-space:nowrap;padding:0 8px}
+.blk.compute{background:linear-gradient(90deg,#5ee7ff,#7ee3b8)}
+.blk.save{background:linear-gradient(90deg,#fbbf24,#f59e0b)}
+.blk.plan{background:linear-gradient(90deg,#a78bfa,#8b5cf6);color:#12092b}
+.blk.wait{background:rgba(251,113,133,.25);border:1px dashed rgba(251,113,133,.6);color:#ffc2cc}
+
+/* ---------- lru ---------- */
+.lru-rows{display:grid;gap:14px;margin-top:8px}
+.lru-row{display:grid;grid-template-columns:100px 1fr;gap:12px;align-items:center}
+@media(max-width:760px){.lru-row{grid-template-columns:1fr}}
+.lru-lb{font:600 12px/1.5 var(--mono);color:#b9c8e6}
+.lru-cells{display:grid;grid-template-columns:repeat(6,1fr);gap:7px}
+@media(max-width:620px){.lru-cells{grid-template-columns:repeat(3,1fr)}}
+.cell{border:1px solid var(--line);border-radius:10px;background:#0c1425;padding:9px 6px;text-align:center;
+  transition:.25s;min-height:54px}
+.cell .tk{font:700 14px/1 var(--mono);color:#e9f3ff}
+.cell .sl{font:10px/1 var(--mono);color:#61729b;display:block;margin-bottom:5px}
+.cell.hit{border-color:rgba(54,211,153,.6);background:rgba(54,211,153,.12);box-shadow:0 0 18px rgba(54,211,153,.12)}
+.cell.hit .tk{color:#9df3d3}
+.cell.new{border-color:rgba(251,191,36,.65);background:rgba(251,191,36,.12);box-shadow:0 0 18px rgba(251,191,36,.12)}
+.cell.new .tk{color:#ffe6a8}
+.cell.keep{border-color:rgba(94,231,255,.25)}
+.cell.vac .tk{color:#3f4e70}
+.lru-stat{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;font:12px/1.4 var(--mono);color:#9fb0d4}
+.lru-stat span{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:#0b1223}
+.lru-stat .g{color:#9df3d3;border-color:rgba(54,211,153,.35)}
+.lru-stat .w{color:#ffe6a8;border-color:rgba(251,191,36,.35)}
+.lru-stat .r{color:#ffc2cc;border-color:rgba(251,113,133,.35)}
+
+/* ---------- budget ---------- */
+.budget{display:grid;grid-template-columns:1.05fr 1fr;gap:22px}
+@media(max-width:900px){.budget{grid-template-columns:1fr}}
+.ctrl{display:grid;grid-template-columns:1fr 96px;gap:8px 12px;align-items:center;margin-bottom:7px}
+.ctrl label{font-size:12.5px;color:#c2d0ee}
+.ctrl .v{font:600 12px/1 var(--mono);color:var(--accent);text-align:right}
+.ctrl input[type=range]{grid-column:1/-1;width:100%;accent-color:#5ee7ff;height:4px;margin:0 0 6px}
+.switch{display:flex;align-items:center;gap:9px;font-size:12.5px;color:#c2d0ee;margin-top:6px}
+.switch input{accent-color:#a78bfa;width:16px;height:16px}
+.blist{display:grid;gap:13px;margin-top:4px}
+.brow{display:grid;grid-template-columns:92px 1fr 80px;gap:10px;align-items:center}
+.brow .bl{font:600 11.5px/1.4 var(--mono);color:#aebdd9}
+.btrack{height:26px;border-radius:8px;background:#0a1020;border:1px solid var(--line);overflow:hidden}
+.bfill{height:100%;width:0;border-radius:7px;transition:width .45s ease;
+  background:linear-gradient(90deg,#3f5578,#5f7aa8)}
+.brow.win .bfill{background:linear-gradient(90deg,#5ee7ff,#7ee3b8);box-shadow:0 0 18px rgba(94,231,255,.25)}
+.brow.win .bl{color:#9df3d3}
+.brow .bv{font:600 11.5px/1 var(--mono);color:#c8d5f2;text-align:right}
+.verdict{margin-top:16px;border:1px solid rgba(94,231,255,.3);border-radius:12px;padding:13px 15px;
+  background:rgba(94,231,255,.07);font-size:13px;color:#cfe6f7}
+.verdict strong{color:#fff}
+.verdict .big{font:700 16px/1.4 var(--mono);color:var(--accent)}
+
+/* ---------- tables ---------- */
+table{width:100%;border-collapse:collapse;font-size:12.8px;margin-top:8px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid rgba(38,53,90,.7);vertical-align:top}
+th{color:#9fb0d4;font-weight:600;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase}
+td code{font-family:var(--mono);font-size:11.5px;color:#cfefff;background:rgba(94,231,255,.07);
+  padding:1px 5px;border-radius:4px}
+tbody tr:hover{background:rgba(94,231,255,.04)}
+.tag{display:inline-block;font:600 10.5px/1 var(--mono);padding:4px 7px;border-radius:6px}
+.tag.ok{color:#9df3d3;background:rgba(54,211,153,.12);border:1px solid rgba(54,211,153,.3)}
+.tag.no{color:#ffc2cc;background:rgba(251,113,133,.12);border:1px solid rgba(251,113,133,.3)}
+.tag.wa{color:#ffe6a8;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3)}
+
+/* reveal */
+.reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none}
+  .flow,.pulse{animation:none}
+}
+footer{border-top:1px solid var(--line);padding:26px 0 60px;color:#7b8db4;font-size:12.5px}
+footer b{color:#a7b6d8}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<!-- ================= HERO ================= -->
+<header class="hero">
+  <div class="wrap">
+    <div class="kicker">vLLM-Ascend · KV Transfer · Sparse KV Offload</div>
+    <h1><span class="g">SparseKVOffloadManager</span><br>稀疏 KV 卸载管理器图解</h1>
+    <p class="sub">
+      它把 SFA / MLA 的历史 KV 放进 CPU DRAM，NPU 上只保留注意力真正会读到的
+      <b>top-k 命中行</b>。调度器看到的 block 数因此被 DRAM 扩容，进而支持更长的
+      <code class="inl">max_model_len</code> 或更大的 decode batch —— 而复用的仍是上游那套
+      <code class="inl">block_table</code> / <code class="inl">slot_mapping</code>。
+    </p>
+    <div class="chips">
+      <div class="chip"><b>1931</b> 行源码</div>
+      <div class="chip"><b>6</b> 元组 KV 契约</div>
+      <div class="chip"><b>TP0</b> 独占 CPU 池</div>
+      <div class="chip"><b>memfabric</b> + <b>_C_ascend</b> 自定义算子</div>
+      <div class="chip">仅 <b>Atlas A3 / Ascend950</b></div>
+    </div>
+
+    <div class="facts">
+      <div class="fact">
+        <h4>PROBLEM</h4>
+        <<p>历史 KV 随序列长度线性膨胀，HBM 先见底，导致 max_model_len 与并发都被 KV 卡死。</p>
+      </div>
+      <div class="fact">
+        <h4>IDEA</h4>
+        <p>全量 KV 落 <strong>host DRAM</strong>；NPU 只留每层每行的 <strong>topk_buffer</strong> 热行。</p>
+      </div>
+      <div class="fact">
+        <h4>TRANSPARENT</h4>
+        <p>不新增调度逻辑，<strong>block_table / slot_mapping 原样复用</strong>，只是把"块"扩容了。</p>
+      </div>
+      <div class="fact">
+        <h4>HOT PATH</h4>
+        <p>decode 每层两次搬运：新 KV <strong>D2H</strong> 落池，top-k 命中行 <strong>H2D</strong> 回热行。</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ================= NAV ================= -->
+<nav class="toc">
+  <div class="wrap">
+    <a href="#s1">01 动机</a>
+    <a href="#s2">02 结构</a>
+    <a href="#s3">03 数据契约</a>
+    <a href="#s4">04 内存预算</a>
+    <a href="#s5">05 初始化</a>
+    <a href="#s6">06 解码时序</a>
+    <a href="#s7">07 LRU 热行</a>
+    <a href="#s8">08 TP / PD</a>
+    <a href="#s9">09 packed / C8</a>
+    <a href="#s10">10 门槛与坑</a>
+    <a href="#s11">11 代码地图</a>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- ================= 01 ================= -->
+<section id="s1" class="reveal">
+  <div class="sec-head"><span class="sec-num">01</span><h2>它到底省了什么</h2></div>
+  <p class="lead">
+    关键不是"把 KV 挪走"，而是<b>只把一次注意力真正需要的那部分挪回来</b>。
+    稀疏注意力（SFA / DSA）每步只用 top-k 个历史 token，所以 NPU 上真正需要常驻的，
+    是每层每行的 <code class="inl">topk_buffer_size</code> 个槽位，而不是整条序列。
+  </p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>不开 offload <small>HBM = 全量 KV</small></h3>
+      <div class="cmp">
+        <div class="cmp-row">
+          <span class="lb">NPU HBM</span>
+          <div class="track"><div class="seg kv" style="width:100%">全量 KV（所有层 × 所有 seq）</div></div>
+          <span class="lb" style="text-align:right">100%</span>
+        </div>
+        <div class="cmp-row">
+          <span class="lb">CPU DRAM</span>
+          <div class="track"><div class="seg dev" style="width:12%"></div></div>
+          <span class="lb" style="text-align:right">≈ 0</span>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:14px 0 0">
+        block 数由 HBM 决定 → 能塞下的序列总长度固定。
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>开 offload <small>HBM = device 部分 + 热行</small></h3>
+      <div class="cmp">
+        <div class="cmp-row">
+          <span class="lb">NPU HBM</span>
+          <div class="track">
+            <div class="seg dev" style="width:18%">device</div>
+            <div class="seg hot" style="width:10%">热行</div>
+          </div>
+          <span class="lb" style="text-align:right">≈ 28%</span>
+        </div>
+        <div class="cmp-row">
+          <span class="lb">CPU DRAM</span>
+          <div class="track"><div class="seg kv" style="width:88%">全量主 KV（pin_memory, 2 MiB 对齐）</div></div>
+          <span class="lb" style="text-align:right">88%</span>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:14px 0 0">
+        block 数改由 <b>DRAM 预算</b>决定（也可能被 NPU 或 workload 反超，见 04）。
+      </p>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:18px">
+    <b>一句话记忆：</b>CPU 池是"真身"，NPU 热行是"工作台"。每次 decode 把新 token 的 KV
+    从计算现场直接写进真身（D2H），再把 top-k 选中的旧 token 搬到工作台（H2D），
+    注意力只读工作台。
+  </div>
+</section>
+
+<!-- ================= 02 ================= -->
+<section id="s2" class="reveal">
+  <div class="sec-head"><span class="sec-num">02</span><h2>结构图：谁持有哪块内存</h2></div>
+  <p class="lead">
+    五类角色：上游调度器（只提供 block_table / slot_mapping）、注意力后端（每层调用）、
+    manager（唯一的编排者）、memfabric DMA 层、以及 CPU 侧的纯 host 算子。
+  </p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 1160 660" role="img" aria-label="SparseKVOffloadManager 结构图">
+      <defs>
+        <marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5ee7ff"/>
+        </marker>
+        <marker id="ahv" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+        </marker>
+        <marker id="ahg" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#7ee3b8"/>
+        </marker>
+      </defs>
+
+      <!-- Scheduler -->
+      <rect class="box" x="24" y="24" width="250" height="112" rx="13"/>
+      <text class="t1" x="42" y="50">Scheduler / 上游元数据</text>
+      <text class="t2" x="42" y="76">block_table · slot_mapping</text>
+      <text class="t2" x="42" y="96">req_ids · stable_prefix_len</text>
+      <text class="t3" x="42" y="118">不新增调度逻辑，原样复用</text>
+
+      <!-- Attention -->
+      <rect class="box hl" x="330" y="24" width="292" height="112" rx="13"/>
+      <text class="t1" x="348" y="50">SFA Attention Backend</text>
+      <text class="t2" x="348" y="76">exec_kv → D2H 落池</text>
+      <text class="t2" x="348" y="96">sparse attn → onload_topk_kv</text>
+      <text class="t3" x="348" y="118">sfa_v1 · sfa_kv_offload</text>
+
+      <!-- Manager -->
+      <rect class="box hl" x="676" y="24" width="452" height="190" rx="13"/>
+      <text class="t1" x="696" y="52">SparseKVOffloadManager</text>
+      <text class="t2" x="696" y="78">register_kv_caches() · 建热行/CPU 视图</text>
+      <text class="t2" x="696" y="98">offload_new_kv() · D2H 写新 KV</text>
+      <text class="t2" x="696" y="118">onload_topk_kv() · planner + H2D</text>
+      <text class="t2" x="696" y="138">prepare_fused_overlap_external_plan()</text>
+      <text class="t2" x="696" y="158">inject_current_kv_into_selection()</text>
+      <text class="t2" x="696" y="178">main_leg_count() / main_gva_bases()</text>
+      <text class="t3" x="696" y="200">packed 时 leg=1，BF16 时 leg=2（K/V）</text>
+
+      <!-- NPU -->
+      <rect class="box hl" x="880" y="288" width="256" height="240" rx="13"/>
+      <text class="t1" x="900" y="316">NPU HBM</text>
+      <text class="t2" x="900" y="344">热行 topk_buffer_k / v</text>
+      <text class="t3" x="900" y="364">每层一份，按 row × slot 切页</text>
+      <rect class="box" x="900" y="382" width="214" height="54" rx="9"/>
+      <text class="t2" x="914" y="404">K / V 热行（resident row）</text>
+      <text class="t4" x="914" y="424">topk_buffer_size × topk rows</text>
+      <text class="t2" x="900" y="466">device paged cache / indexer</text>
+      <text class="t3" x="900" y="486">Sparse LI C8 索引缓存独立，常驻</text>
+      <text class="t3" x="900" y="506">不注册给本 manager</text>
+
+      <!-- CPU pool -->
+      <rect class="box hl" x="24" y="486" width="300" height="150" rx="13"/>
+      <text class="t1" x="44" y="512">CPU DRAM · KV Pool</text>
+      <text class="t2" x="44" y="538">K/V 全量池（pin_memory）</text>
+      <text class="t3" x="44" y="558">仅 TP0 物理分配，GVA 广播共享</text>
+      <rect class="box" x="44" y="570" width="260" height="48" rx="8"/>
+      <text class="t2" x="58" y="590">2 MiB 对齐 · 层间 delta 恒定</text>
+      <text class="t4" x="58" y="608">empty_aligned_int8_cpu_tensors</text>
+
+      <!-- memfabric -->
+      <rect class="box" x="352" y="486" width="300" height="150" rx="13"/>
+      <text class="t1" x="372" y="512">memfabric offload</text>
+      <text class="t2" x="372" y="538">offload.initialize(OffloadConfig)</text>
+      <text class="t2" x="372" y="558">offload.sparse_copy(ptr,ptr,len,n)</text>
+      <text class="t3" x="372" y="578">scene=SHARED · tcp://127.0.0.1:8500+dp</text>
+      <text class="t3" x="372" y="600">D2H / H2D 都用同一套描述符</text>
+
+      <!-- CPU ops -->
+      <rect class="box" x="680" y="486" width="448" height="150" rx="13"/>
+      <text class="t1" x="700" y="512">CPU 自定义算子（OpenMP，纯 host）</text>
+      <text class="t2" x="700" y="538">sparse_kv_lru_resident_compact</text>
+      <text class="t3" x="700" y="556">驻留集合求交 → miss_count / miss_tokens / miss_slots</text>
+      <text class="t2" x="700" y="580">sparse_kv_compute_lru_resident_addrs</text>
+      <text class="t3" x="700" y="598">miss token → CPU 池地址；slot → 热行地址</text>
+      <text class="t2" x="700" y="622">sparse_kv_restore_bfloat16/int16_tensor</text>
+
+      <!-- arrows -->
+      <line class="wire" x1="274" y1="80" x2="322" y2="80" marker-end="url(#ah)"/>
+      <circle cx="298" cy="62" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="298" y="66" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">1</text>
+
+      <line class="flow" x1="622" y1="66" x2="674" y2="66" marker-end="url(#ah)"/>
+      <circle cx="648" cy="48" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="648" y="52" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">2</text>
+
+      <line class="wire v" x1="674" y1="98" x2="626" y2="98" marker-end="url(#ahv)"/>
+      <circle cx="648" cy="116" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="648" y="120" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">10</text>
+
+      <line class="flow" x1="780" y1="214" x2="780" y2="480" marker-end="url(#ah)"/>
+      <circle cx="780" cy="352" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="780" y="356" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">3</text>
+
+      <line class="flow" x1="676" y1="560" x2="656" y2="560" marker-end="url(#ah)"/>
+      <circle cx="666" cy="540" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="666" y="544" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">4</text>
+
+      <line class="flow" x1="348" y1="560" x2="328" y2="560" marker-end="url(#ah)"/>
+      <circle cx="338" cy="540" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="338" y="544" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">5</text>
+
+      <line class="flow" x1="700" y1="214" x2="600" y2="480" marker-end="url(#ah)"/>
+      <circle cx="652" cy="352" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="652" y="356" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">6</text>
+
+      <line class="flow" x1="652" y1="486" x2="876" y2="432" marker-end="url(#ahg)"/>
+      <circle cx="768" cy="444" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="768" y="448" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">7</text>
+
+      <line class="flow" x1="1008" y1="214" x2="1008" y2="284" marker-end="url(#ah)"/>
+      <circle cx="1008" cy="250" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="1008" y="254" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">8</text>
+
+      <polyline class="flow" points="574,136 574,258 860,258 860,284" marker-end="url(#ah)"/>
+      <circle cx="716" cy="258" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="716" y="262" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">9</text>
+
+    </svg>
+  </div>
+
+  <div class="legend">
+    <span><i>1</i><b>Scheduler → Attention</b>：block_table / slot_mapping 原样透传</span>
+    <span><i>2</i><b>Attention → Manager</b>：每层 exec_kv 后调用 offload_new_kv</span>
+    <span><i>3</i><b>Manager → CPU 算子</b>：打包参数，调用 planner 与地址计算</span>
+    <span><i>4</i><b>CPU 算子 → memfabric</b>：输出 gvas / addr / size 描述符</span>
+    <span><i>5</i><b>memfabric ↔ CPU 池</b>：D2H 写新 KV，H2D 读 miss 行</span>
+    <span><i>6</i><b>Manager → memfabric</b>：offload.sparse_copy 一次批量搬运</span>
+    <span><i>7</i><b>memfabric → NPU 热行</b>：按 slot 写入 resident row</span>
+    <span><i>8</i><b>Manager → NPU</b>：current_slots、resident 视图参数</span>
+    <span><i>9</i><b>Attention → NPU 热行</b>：稀疏注意力只读热行</span>
+    <span><i>10</i><b>Attention → Manager</b>：进入注意力前 onload_topk_kv</span>
+  </div>
+
+  <div class="note" style="margin-top:16px">
+    <b>注意层级：</b>热行是 <b>per-layer</b> 的 —— <code class="inl">topk_buffers_k[layer_id]</code>。
+    每层都有自己的 top-k 选择结果，因此 CPU 侧也按层维护一套 <code class="inl">lru_slot_to_token</code>。
+  </div>
+</section>
+
+<!-- ================= 03 ================= -->
+<section id="s3" class="reveal">
+  <div class="sec-head"><span class="sec-num">03</span><h2>数据契约：那个必须长度恰好为 6 的元组</h2></div>
+  <p class="lead">
+    manager 不自己分配 KV，它<b>消费</b> worker 侧建好的元组。
+    <code class="inl">register_kv_caches</code> 第一件事就是校验长度恰好
+    <code class="inl">OFFLOAD_KV_CACHE_TUPLE_LEN == 6</code>，多一个少一个都会立刻报错。
+  </p>
+
+  <div class="tuple">
+    <div class="slot npu"><span class="idx">0</span><div class="nm">K_npu</div><div class="dv">设备主 KV / 调试期 paged cache</div></div>
+    <div class="slot npu"><span class="idx">1</span><div class="nm">V_npu</div><div class="dv">同上；packed 时为 None</div></div>
+    <div class="slot cpu"><span class="idx">2</span><div class="nm">K_cpu</div><div class="dv">host 全量池，仅 TP0 持有</div></div>
+    <div class="slot cpu"><span class="idx">3</span><div class="nm">V_cpu</div><div class="dv">同上；packed 时为 None</div></div>
+    <div class="slot hot"><span class="idx">4</span><div class="nm">topk_k</div><div class="dv">每层热行（int8 或 bf16）</div></div>
+    <div class="slot hot alias"><span class="idx">5</span><div class="nm">topk_v</div><div class="dv">packed 时与 4 是同一块</div></div>
+  </div>
+
+<pre class="code"><span class="c"># sparse_kv_offload_manager.py:38-45</span>
+<span class="c"># Main KV cache:</span>
+<span class="c"># [k_cache, v_cache, k_cache_cpu, v_cache_cpu, topk_buffer_k, topk_buffer_v].</span>
+<span class="c"># A BF16 main cache fills all six slots. A packed SFA main cache (C8 or TQ4)</span>
+<span class="c"># stores one byte row per token, so the V slots alias the K slots and the</span>
+<span class="c"># offload kernels keep their K/V-pair contract by copying the same row twice.</span>
+<span class="k">OFFLOAD_KV_CACHE_TUPLE_LEN</span> = <span class="s">6</span></pre>
+
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3>BF16 主 KV：双 leg <small>main_leg_count = 2</small></h3>
+      <p style="font-size:13.2px;color:var(--muted);margin:0">
+        K 维度取 <code class="inl">kv_lora_rank</code>，V 维度取 <code class="inl">qk_rope_head_dim</code>。
+        两个热行<b>一起分配再切开</b>，保证 K / V 的 <code class="inl">data_ptr</code> 差值在所有层恒定 ——
+        这样 <code class="inl">skip_topk</code> 时只需平移一个 delta 就能换层。
+      </p>
+      <pre class="code" style="margin-bottom:0"><span class="c"># 先一整块，再 split（对齐原因）</span>
+topk_buffer_raw = torch.empty(
+  [k_bytes + v_bytes], dtype=torch.int8, device=<span class="s">"npu"</span>)
+topk_buffer_k = topk_buffer_raw[:k_bytes].view(torch.bfloat16)...
+topk_buffer_v = topk_buffer_raw[k_bytes:].view(torch.bfloat16)...</pre>
+    </div>
+    <div class="card">
+      <h3>packed 主 KV：单 leg <small>main_leg_count = 1</small></h3>
+      <p style="font-size:13.2px;color:var(--muted);margin:0">
+        每个 token 只有<b>一行字节</b>，K/V 两半与 scale 都打包在行内。
+        因此 <code class="inl">v_tensor_size is None</code>：
+        设备与 host 的 V 槽位都留空，热行 K/V 指同一块内存。
+      </p>
+      <div class="note warn" style="margin-top:12px">
+        这会带来 <b>2× 拷贝带宽</b>（同一行被写两遍），但<b>零额外 HBM</b>，
+        且不用改 C++ 侧写死的"K/V 双段"契约。
+      </div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:16px">
+    <b>为什么不是 7 元组？</b>稀疏 LI 的 C8 indexer 缓存是
+    <b>device-resident</b>，不参与卸载，也不注册给这个 manager ——
+    所以元组只描述"主 KV"的 6 个槽位。
+  </div>
+</section>
+
+<!-- ================= 04 ================= -->
+<section id="s4" class="reveal">
+  <div class="sec-head"><span class="sec-num">04</span><h2>内存预算：三方约束取最小值</h2></div>
+  <p class="lead">
+    <code class="inl">plan_sparse_kv_offload_memory</code> 会同时算 NPU、DRAM、workload 三个上限，
+    取<b>最小者</b>作为最终可见 block 数。下面这个计算器按源码公式实时演算（参数为示意值，不是真实模型）。
+  </p>
+
+  <div class="budget">
+    <div class="card">
+      <h3>参数 <small>拖动即时重算</small></h3>
+      <div class="ctrl"><label for="bDram">DRAM 预算 (GiB)</label><span class="v" id="vDram">128</span>
+        <input type="range" id="bDram" min="8" max="512" step="8" value="128"></div>
+      <div class="ctrl"><label for="bDev">可用设备显存 (GiB)</label><span class="v" id="vDev">48</span>
+        <input type="range" id="bDev" min="4" max="128" step="4" value="48"></div>
+      <div class="ctrl"><label for="bLayers">层数 L</label><span class="v" id="vLayers">61</span>
+        <input type="range" id="bLayers" min="8" max="100" step="1" value="61"></div>
+      <div class="ctrl"><label for="bHost">每层 host page (MiB)</label><span class="v" id="vHost">4.0</span>
+        <input type="range" id="bHost" min="0.5" max="16" step="0.5" value="4"></div>
+      <div class="ctrl"><label for="bDevP">每层 device page (MiB)</label><span class="v" id="vDevP">0.5</span>
+        <input type="range" id="bDevP" min="0.1" max="4" step="0.1" value="0.5"></div>
+      <div class="ctrl"><label for="bSeqs">max_num_seqs</label><span class="v" id="vSeqs">32</span>
+        <input type="range" id="bSeqs" min="1" max="256" step="1" value="32"></div>
+      <div class="ctrl"><label for="bBlk">每请求最大 block 数</label><span class="v" id="vBlk">40</span>
+        <input type="range" id="bBlk" min="4" max="200" step="4" value="40"></div>
+      <div class="switch"><input type="checkbox" id="bKeep"><label for="bKeep">keep_device_kv_cache（colocate 调试）</label></div>
+    </div>
+
+    <div class="card">
+      <h3>三个上限</h3>
+      <div class="blist">
+        <div class="brow" id="rowNpu"><span class="bl">NPU 上限</span><div class="btrack"><div class="bfill" id="fillNpu"></div></div><span class="bv" id="valNpu"></span></div>
+        <div class="brow" id="rowDram"><span class="bl">DRAM 上限</span><div class="btrack"><div class="bfill" id="fillDram"></div></div><span class="bv" id="valDram"></span></div>
+        <div class="brow" id="rowWl"><span class="bl">workload</span><div class="btrack"><div class="bfill" id="fillWl"></div></div><span class="bv" id="valWl"></span></div>
+      </div>
+      <div class="verdict" id="verdict"></div>
+      <pre class="code" style="margin-bottom:0"><span class="c"># 关键公式（源码 302-362 行，已简化）</span>
+host_page  = Σ page_size(store_on_host)
+dram_blocks = (dram - L*6MiB) // host_page
+npu_page   = total_page  if keep_device_kv_cache else device_page
+npu_blocks = available_device_mem // npu_page
+workload   = max_blocks_per_req * max_num_seqs + 1
+final      = min(npu, dram, workload)</pre>
+    </div>
+  </div>
+
+  <div class="note warn" style="margin-top:18px">
+    <b>两个容易忽略的量：</b>
+    ① 对齐预留 <code class="inl">_CPU_CACHE_MAX_ALIGNMENT_OVERHEAD_PER_LAYER = 3 × 2 MiB</code>，
+    按 <b>host 层数</b>扣减；
+    ② <code class="inl">_VLLM_NULL_BLOCK_COUNT = 1</code>，给 vLLM 的空 block 留位置。
+  </div>
+</section>
+
+<!-- ================= 05 ================= -->
+<section id="s5" class="reveal">
+  <div class="sec-head"><span class="sec-num">05</span><h2>初始化：从配置到可工作的六个阶段</h2></div>
+  <p class="lead">
+    manager 用模块级单例 <code class="inl">_SPARSE_KV_OFFLOAD_MANAGER</code> 持有，
+    初始化顺序里<b>任何一步失败都会直接抛错</b>，因为这条路径是 opt-in 的。
+  </p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>阶段流水</h3>
+      <div class="timeline">
+        <div class="tl">
+          <h4>硬件与算子闸门</h4>
+          <div class="fn">_sparse_kv_ops() · init_sparse_kv_offload_manager()</div>
+          <p>检查 <b>HardwareCapability.SPARSE_KV_OFFLOAD</b>（A3 / Ascend950）、
+            <code class="inl">load_custom_ops_library()</code>，并逐个校验 7 个 <code class="inl">_C_ascend</code> 算子是否存在。</p>
+        </div>
+        <div class="tl">
+          <h4>三方预算 → 可见 block 数</h4>
+          <div class="fn">plan_sparse_kv_offload_memory()</div>
+          <p>见上一节。若 DRAM 成为瓶颈，会打印一条 <b>warning_once</b> 建议调大
+            <code class="inl">dram_size_per_dp_GB</code>。</p>
+        </div>
+        <div class="tl">
+          <h4>建张量：2 MiB 对齐的 host 池</h4>
+          <div class="fn">empty_aligned_int8_cpu_tensors() · allocate / reshape</div>
+          <p>从一块连续的 pinned 缓冲里切出对齐张量；<b>K/V 一起分配</b>，
+            层间差值恒定。packed 时只分配单腿。</p>
+        </div>
+        <div class="tl">
+          <h4>注册 memfabric offload 实例</h4>
+          <div class="fn">__init__ → offload.initialize(OffloadConfig)</div>
+          <p><code class="inl">reserve_size</code> 与 <code class="inl">alloc_size</code> 只在 <b>TP0</b> 非零；
+            <code class="inl">scene=SHARED</code>；<code class="inl">store_url</code> 用
+            <code class="inl">8500 + dp_index</code>；随后 <code class="inl">tp_group.barrier()</code>。</p>
+        </div>
+        <div class="tl">
+          <h4>挂接 KV 缓存与热行</h4>
+          <div class="fn">register_kv_caches()</div>
+          <p>收集 6 元组、校验 dtype 与 topk_buffer 形状；广播 GVA / block_len / shape，
+            让 TP&gt;0 恢复共享 CPU 池视图；建描述符与 LRU 工作区。</p>
+        </div>
+        <div class="tl">
+          <h4>预热 planner 线程组</h4>
+          <div class="fn">_warmup_external_lru_planner_threads()</div>
+          <p>仅 fused_overlap + TP0 时执行，OpenMP 线程组 <code class="inl">lru_workspace_threads = 8</code> 一次建好，避免首步抖动。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>register_kv_caches 建出来的东西</h3>
+      <p style="font-size:13.2px;color:var(--muted);margin:0 0 10px">
+        D2H 描述符与 H2D 描述符分开：<b>D2H 用独立数组</b>，H2D 复用同一块 pinned "参数包"。
+      </p>
+      <div class="argsbuf">
+        <div class="ab1">gvas<small>int64 × 2</small></div>
+        <div class="ab2">addr<small>int64 × 2</small></div>
+        <div class="ab3">size<small>int32 × 2</small></div>
+        <div class="ab4">n<small>int32</small></div>
+      </div>
+      <p style="font-size:12.4px;color:var(--muted);margin:10px 0 0">
+        一块 <code class="inl">sparse_copy_args_buffer_cpu</code>（pinned），四个 <code class="inl">.view()</code>；
+        NPU 侧有完全对应的镜像，每步整块 <code class="inl">copy_</code>。
+        这样一次搬运只查一张表。
+      </p>
+      <table style="margin-top:14px">
+        <thead><tr><th>产物</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td><code>current_slots_npu</code></td><td>每 row 的 top-k 命中落在哪个热行槽</td></tr>
+          <tr><td><code>resident_block_table_npu</code></td><td>热行的线性 arange 视图，屏蔽真实 block 映射</td></tr>
+          <tr><td><code>resident_query/seq_lens</code></td><td>注意力按固定 topk_buffer_size 读</td></tr>
+          <tr><td><code>lru_slot_to_token</code></td><td>每层每槽当前驻留的 token（-1 为空）</td></tr>
+          <tr><td><code>lru_workspace_*</code></td><td>每个 OpenMP 线程私有的 mark / pos / slot 暂存</td></tr>
+          <tr><td><code>d2h_*_npu</code></td><td><code>max_num_tokens × 2</code> 条 D2H 描述符</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 06 ================= -->
+<section id="s6" class="reveal">
+  <div class="sec-head"><span class="sec-num">06</span><h2>时序图：一次 decode 的完整往返</h2></div>
+  <p class="lead">
+    点"下一步"逐步高亮。注意顺序：<b>先把新 KV 写进池，再为旧的 top-k 补货</b>。
+    这样本步新 token 也已经在池里，可以被同一步的 top-k 命中。
+  </p>
+
+  <div class="diagram" style="padding:6px">
+    <svg id="seqSvg" viewBox="0 0 1170 820" role="img" aria-label="decode 时序图"></svg>
+  </div>
+
+  <div class="seq-tools">
+    <button class="btn ghost" id="seqPrev" disabled>◀ 上一步</button>
+    <button class="btn" id="seqNext">下一步 ▶</button>
+    <button class="btn ghost" id="seqPlay">自动播放</button>
+    <button class="btn ghost" id="seqReset">重置</button>
+    <span class="seq-count" id="seqCount">1 / 15</span>
+  </div>
+
+  <div class="detail" id="seqDetail"></div>
+
+  <div class="grid2" style="margin-top:20px">
+    <div class="card">
+      <h3>捕获（capturing）时的切流 <small>fused_overlap</small></h3>
+      <div class="streams">
+        <div class="srow">
+          <span class="sname">compute stream</span>
+          <div class="strack">
+            <div class="blk compute" style="left:1%;width:26%">exec_kv 计算</div>
+            <div class="blk compute" style="left:31%;width:30%">sparse attention</div>
+            <div class="blk compute" style="left:65%;width:16%">注入当前 KV</div>
+          </div>
+        </div>
+        <div class="srow">
+          <span class="sname">current_kv_save</span>
+          <div class="strack">
+            <div class="blk wait" style="left:4%;width:24%">等 event</div>
+            <div class="blk save" style="left:30%;width:22%">D2H 写池</div>
+          </div>
+        </div>
+        <div class="srow">
+          <span class="sname">fused_plan stream</span>
+          <div class="strack">
+            <div class="blk plan" style="left:60%;width:34%">planner + 描述符</div>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:12.6px;color:var(--muted);margin:12px 0 0">
+        只在 <code class="inl">capturing=True</code> 且 <code class="inl">fused_overlap</code> 时生效。
+        <code class="inl">wait_for_current_kv_writeback()</code> 负责把 compute 流等回 save 流。
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>图模式下的 host 回调 <small>onload_topk_kv</small></h3>
+      <p style="font-size:13.2px;color:var(--muted);margin:0">
+        CPU planner 无法被 NPU graph 捕获。捕获时 manager 把整包参数
+        （36 个字段的 tuple）交给
+        <code class="inl">torch_npu.npu._launch_host_func(stream, fn, args)</code>，
+        并先 <code class="inl">_subscribe_report(stream)</code> 让该流可承载 host 回调。
+      </p>
+<pre class="code" style="margin-bottom:0"><span class="k">if</span> capturing:
+    cur = torch_npu.npu.current_stream()
+    <span class="k">if</span> cur <span class="k">not in</span> subscribed:
+        torch_npu.npu._subscribe_report(cur)
+        subscribed.add(cur)
+    torch_npu.npu._launch_host_func(cur, self._onload_topk_kv_cpu, args)
+<span class="k">else</span>:
+    self._onload_topk_kv_cpu(args)   <span class="c"># eager：直接同步跑</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 07 ================= -->
+<section id="s7" class="reveal">
+  <div class="sec-head"><span class="sec-num">07</span><h2>热行替换：命中留下，未命中补货</h2></div>
+  <p class="lead">
+    每层有 <code class="inl">lru_slot_to_token[rows, topk_buffer_size]</code>：
+    <b>槽位 → 当前放的 token</b>。新 top-k 列表到达后，已在驻留集合里的是命中（不动），
+    其余从空槽或最久未用的槽补进来。下面是概念演示（非精确实现）。
+  </p>
+
+  <div class="card">
+    <div class="lru-rows">
+      <div class="lru-row">
+        <div class="lru-lb">row 0<br><span style="color:#61729b;font-weight:400">top-k 列表</span></div>
+        <div class="lru-cells" id="lruRow0"></div>
+      </div>
+      <div class="lru-row">
+        <div class="lru-lb">row 1<br><span style="color:#61729b;font-weight:400">top-k 列表</span></div>
+        <div class="lru-cells" id="lruRow1"></div>
+      </div>
+    </div>
+    <div class="lru-stat" id="lruStat"></div>
+    <div class="seq-tools">
+      <button class="btn" id="lruNext">下一步 ▶</button>
+      <button class="btn ghost" id="lruReset">重置</button>
+      <span class="seq-count" id="lruCount"></span>
+    </div>
+  </div>
+
+  <pre class="code" style="margin-top:18px"><span class="c"># 描述符是怎么算出来的（sparse_kv_compute_lru_resident_addrs，host 侧）</span>
+<span class="c"># 源：miss token → CPU 池绝对地址</span>
+src = gvas_base[layer] + block_table[row][token // block_size] * block_bytes \
+      + (token % block_size) * token_bytes
+<span class="c"># 目的：热行 slot → NPU 热行绝对地址</span>
+dst = addr_base[layer] + slot * token_bytes
+<span class="c"># packed 时 K/V 指向同一行；BF16 时 K/V 各一条描述符</span></pre>
+
+  <div class="grid3" style="margin-top:18px">
+    <div class="card"><h3>① 求交</h3><p style="font-size:13px;color:var(--muted);margin:0">
+      对新 top-k 与 <code class="inl">slot_to_token</code> 做集合运算，产出
+      <code class="inl">miss_count / miss_tokens / miss_slots</code>。</p></div>
+    <div class="card"><h3>② 选槽</h3><p style="font-size:13px;color:var(--muted);margin:0">
+      优先空槽；否则淘汰最久未用的可淘汰槽，并把旧 token 标记失效。</p></div>
+    <div class="card"><h3>③ 编址</h3><p style="font-size:13px;color:var(--muted);margin:0">
+      每个 miss 生成一条 <code class="inl">(gvas, addr, size)</code>，
+      非法行 size 置 0，天然跳过。</p></div>
+  </div>
+
+  <div class="note" style="margin-top:16px">
+    <b>skip_topk 的省法：</b>同一批 token 的所有层 top-k 相同，只有热行/池基址不同。
+    源码直接断言层间 K/V 的<b>基址差相等</b>，然后把两个描述符数组整体
+    <code class="inl">+= delta</code>，跳过整个 planner 与编址 —— 这是"层间 delta 恒定"设计的回报。
+  </div>
+</section>
+
+<!-- ================= 08 ================= -->
+<section id="s8" class="reveal">
+  <div class="sec-head"><span class="sec-num">08</span><h2>TP 共享与 PD 分离</h2></div>
+  <p class="lead">
+    只有 <b>TP0</b> 真正分配 host 池并写 decode KV（decode KV 在 TP 间本来就被复制）；
+    其他 rank 通过广播得到的 <b>GVA</b> 读同一块 host 内存。PD 分离时，D 节点把 P 节点
+    拉来的 KV 直接落进这个池，本地注意力再从池里补货。
+  </p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>TP 内的协作 <small>无需 barrier</small></h3>
+      <div class="timeline" style="margin-top:14px">
+        <div class="tl"><h4>TP0：写 + 算</h4>
+          <div class="fn">_offload_new_kv_on_current_stream</div>
+          <p>只有 TP0 会往下走；<code class="inl">tp_rank != 0</code> 直接 return。</p></div>
+        <div class="tl"><h4>广播元信息</h4>
+          <div class="fn">tp_group.broadcast(gvas / block_len / shape)</div>
+          <p>TP0 分配后把指针与形状广播；其他 rank 用
+            <code class="inl">sparse_kv_restore_*_tensor</code> 还原成本地视图。</p></div>
+        <div class="tl"><h4>栅栏用空 tensor</h4>
+          <div class="fn">tp_group.broadcast(torch.empty([], int8), src=0)</div>
+          <p>目的：保证 TP0 的 D2H 已落池，再让其他 rank 的 H2D 去读。
+            <b>不能用 barrier</b>，因为它无法被 graph 捕获。</p></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>PD 分离：D 侧注册 <small>sfa_pd_rd2h</small></h3>
+      <p style="font-size:13.2px;color:var(--muted);margin:0 0 10px">
+        拉取线程需要知道"往哪写"，manager 提供一组 N-leg 通用访问器：
+      </p>
+      <table>
+        <thead><tr><th>访问器</th><th>返回</th></tr></thead>
+        <tbody>
+          <tr><td><code>main_leg_count</code></td><td>1（packed）或 2（BF16 K/V）</td></tr>
+          <tr><td><code>main_cpu_pools(layer)</code></td><td>rank-local 目标池（非 TP0 为空）</td></tr>
+          <tr><td><code>main_gva_bases(layer)</code></td><td>共享池基址元组</td></tr>
+          <tr><td><code>main_block_lens(layer)</code></td><td>每个 leg 的每 block 字节数</td></tr>
+        </tbody>
+      </table>
+      <div class="note warn" style="margin-top:14px">
+        Ascend950 上用 <code class="inl">device_urma</code> 时，本地目标内存
+        <b>必须先注册到本 rank 的 TransferEngine</b>，否则首次读就会报地址查表失败。
+      </div>
+    </div>
+  </div>
+
+  <div class="diagram" style="margin-top:18px">
+    <svg viewBox="0 0 1100 250" role="img" aria-label="PD 分离示意">
+      <defs>
+        <marker id="ah3" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5ee7ff"/>
+        </marker>
+        <marker id="ah4" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+        </marker>
+      </defs>
+      <rect class="box" x="20" y="40" width="270" height="150" rx="12"/>
+      <text class="t1" x="38" y="66">P 节点（prefill）</text>
+      <text class="t2" x="38" y="92">paged KV 写完即具备</text>
+      <text class="t2" x="38" y="112">layer_metadata / 主 KV 地址</text>
+      <text class="t3" x="38" y="140">不跑 manager</text>
+
+      <rect class="box" x="380" y="20" width="330" height="190" rx="12"/>
+      <text class="t1" x="398" y="46">D 节点（decode）</text>
+      <text class="t2" x="398" y="72">read_thread → 落 manager 的 CPU 池</text>
+      <text class="t2" x="398" y="92">同时写 indexer HBM</text>
+      <text class="t2" x="398" y="112">本地 onload_topk_kv 补货热行</text>
+      <text class="t3" x="398" y="140">main_leg_count = 1 / 2</text>
+      <text class="t3" x="398" y="160">目标内存需先本地注册（urma）</text>
+      <text class="t2" x="398" y="186">SparseKVOffloadManager</text>
+
+      <rect class="box" x="810" y="40" width="270" height="150" rx="12"/>
+      <text class="t1" x="828" y="66">NPU 热行</text>
+      <text class="t2" x="828" y="92">本轮 decode 真正读的行</text>
+      <text class="t3" x="828" y="120">每层 topk_buffer</text>
+      <text class="t3" x="828" y="140">未命中才从池里补</text>
+
+      <line class="flow" x1="290" y1="100" x2="376" y2="100" marker-end="url(#ah)"/>
+      <circle cx="333" cy="82" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="333" y="86" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">1</text>
+
+      <line class="flow" x1="710" y1="100" x2="806" y2="100" marker-end="url(#ah4)"/>
+      <circle cx="758" cy="82" r="10" fill="#0e1830" stroke="#38507d"/>
+      <text x="758" y="86" text-anchor="middle" fill="#9fb3d8" font-size="11" font-family="monospace">2</text>
+
+      <text x="300" y="132" fill="#7f90b6" font-size="10.5">远程拉取 → 池</text>
+      <text x="720" y="132" fill="#7f90b6" font-size="10.5">top-k 补货</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ================= 09 ================= -->
+<section id="s9" class="reveal">
+  <div class="sec-head"><span class="sec-num">09</span><h2>packed / C8：单腿契约与硬门槛</h2></div>
+  <p class="lead">
+    packed 主缓存（C8 或 TQ4）每个 token 只有一行字节，K/V 与 scale 打包在行内。
+    manager 用"<b>V 槽位别名 K</b>"继续满足底层算子的 K/V 双段契约，代价是带宽翻倍。
+  </p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>行宽怎么来的</h3>
+      <div class="fn" style="font-family:var(--mono);font-size:11.5px;color:var(--accent);margin-bottom:8px">
+        packed_sfa_main_row_bytes()</div>
+<pre class="code" style="margin:0">row_bytes = real_page_size_bytes
+            // (block_size * num_kv_heads)
+
+<span class="c"># 三个前置条件，任一不满足直接 ValueError：</span>
+<span class="c"># 1) tokens_per_state == 1</span>
+<span class="c"># 2) page_size_bytes == real_page_size_bytes（无 padding）</span>
+<span class="c"># 3) 页能被 token 行整除</span></pre>
+      <p style="font-size:12.6px;color:var(--muted);margin:12px 0 0">
+        热行按 <code class="inl">[rows, topk_buffer_size, 1, row_bytes]</code> 建，
+        分配成 <code class="inl">int8</code>，读取时再 <code class="inl">.view(packed_main_dtype)</code>
+        让量化稀疏算子选中正确分支。
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>禁止组合</h3>
+      <table style="margin-top:0">
+        <thead><tr><th>组合</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td>packed + <code>use_fused_copy_sfa</code></td><td><span class="tag no">NotImplementedError</span></td></tr>
+          <tr><td>packed + <code>use_fused_overlap</code></td><td><span class="tag no">NotImplementedError</span></td></tr>
+          <tr><td>packed 层与 BF16 层混用</td><td><span class="tag no">ValueError</span></td></tr>
+          <tr><td>多个 host packed dtype</td><td><span class="tag no">ValueError</span></td></tr>
+          <tr><td>packed 却分到独立 V 张量</td><td><span class="tag no">ValueError</span></td></tr>
+          <tr><td><code>fused_copy_sfa</code> + <code>fused_overlap</code></td><td><span class="tag no">配置期互斥</span></td></tr>
+        </tbody>
+      </table>
+      <div class="note" style="margin-top:14px">
+        这些闸门都在 <b>注册期</b>触发，而不是等运行几步后才静默出错 —— 对调试友好。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 10 ================= -->
+<section id="s10" class="reveal">
+  <div class="sec-head"><span class="sec-num">10</span><h2>门槛、约束与坑</h2></div>
+  <p class="lead">逐条对应源码里的 assert / raise / logger 位置，便于排查。</p>
+
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr><th style="width:150px">类别</th><th>约束</th><th style="width:110px">级别</th></tr></thead>
+      <tbody>
+        <tr><td>平台</td><td>必须支持 <code>HardwareCapability.SPARSE_KV_OFFLOAD</code>（Atlas A3 / Ascend950）</td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>算子</td><td><code>_C_ascend</code> 必须存在 7 个 <code>sparse_kv_*</code> 算子，且 <code>vllm_ascend_C</code> 可加载</td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>模型</td><td>仅稀疏注意力（有 <code>index_topk</code>）；不支持 <code>compress_ratios</code>；仅 SFA/MLA 单 KV head</td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>并行</td><td>不支持 CP（prefill/decode context parallel）、不支持 PP</td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>block</td><td>target 与 draft 组必须<b>共享同一个 block_size</b></td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>热行</td><td><code>topk_buffer_size % block_size == 0</code></td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>DRAM</td><td>对齐后 planned pool ≤ <code>dram_size_per_dp_GB</code></td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>prefill</td><td><code>has_prefill=True</code> 需要 <code>keep_device_kv_cache=True</code>（仅 colocate 调试）</td><td><span class="tag wa">调试</span></td></tr>
+        <tr><td>容量</td><td>token 数 ≤ <code>max_num_tokens</code>（D2H）/ ≤ <code>max_num_topk_rows</code>（H2D）</td><td><span class="tag no">硬闸门</span></td></tr>
+        <tr><td>对齐</td><td>host 池 2 MiB 对齐；K/V 一起分配保证层间 delta 恒定</td><td><span class="tag wa">设计前提</span></td></tr>
+        <tr><td>graph</td><td>不能用 <code>barrier()</code>；CPU planner 必须走 <code>_launch_host_func</code></td><td><span class="tag wa">注意</span></td></tr>
+        <tr><td>同步</td><td>只在非捕获路径读 <code>fused_plan_status_npu.item()</code> 做失败检查</td><td><span class="tag ok">可接受</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3>三个真实陷阱</h3>
+      <div class="note bad" style="margin-top:10px">
+        <b>no-op 不等于成功。</b><code class="inl">offload.sparse_copy</code> 返回值必须检查：
+        <code class="inl">if result not in (None, 0): raise</code>，否则丢数据无声无息。
+      </div>
+      <div class="note warn" style="margin-top:10px">
+        <b>非法 slot 靠长度 0 屏蔽。</b>不要跳过写描述符 —— 位置和条数必须与
+        <code class="inl">slot_mapping</code> 一一对应，只是 length 置 0。
+      </div>
+      <div class="note" style="margin-top:10px">
+        <b>层数不等于 target 层数。</b><code class="inl">mtp_layer_id = num_layers - 1</code>
+        只在 <code class="inl">num_layers != num_target_layers</code> 时成立，
+        MTP 层元数据不能复用上一层。
+      </div>
+    </div>
+    <div class="card">
+      <h3>与上游的接线点</h3>
+      <table style="margin-top:4px">
+        <thead><tr><th>位置</th><th>调用</th></tr></thead>
+        <tbody>
+          <tr><td><code>model_runner_v1.py:4686</code></td><td><code>register_kv_caches(kv_caches)</code></td></tr>
+          <tr><td><code>sfa_kv_offload.py:928/950/1007</code></td><td><code>offload_new_kv(...)</code> 每层写新 KV</td></tr>
+          <tr><td><code>sfa_kv_offload.py:1789</code></td><td><code>onload_topk_kv(...)</code> decode 补货</td></tr>
+          <tr><td><code>sfa_kv_offload.py:1585/1618/1663</code></td><td><code>get_fused_overlap_cpu_kv_inputs / prepare_fused_overlap_external_plan / inject_current_kv_into_selection</code></td></tr>
+          <tr><td><code>sfa_pd_rd2h/worker.py:485</code></td><td><code>main_leg_count</code> 决定 P/D 匹配的主 KV 腿数</td></tr>
+          <tr><td><code>model_runner_v1.py:3434</code></td><td><code>restore_copy_sfa_tails</code> 前缀回滚恢复尾块</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 11 ================= -->
+<section id="s11" class="reveal">
+  <div class="sec-head"><span class="sec-num">11</span><h2>代码地图</h2></div>
+  <p class="lead">按调用顺序排列，定位时可直接跳到对应函数。</p>
+  <div class="card" style="overflow-x:auto">
+    <table>
+      <thead><tr><th style="width:78px">行号</th><th style="width:340px">符号</th><th>职责</th></tr></thead>
+      <tbody>
+        <tr><td>115</td><td><code>packed_sfa_main_row_bytes</code></td><td>packed 行宽推导与三个前置校验</td></tr>
+        <tr><td>134</td><td><code>allocate_kv_offload_topk_buffer_pair</code></td><td>热行分配：BF16 双段 / packed 单段 + fused 变体</td></tr>
+        <tr><td>238</td><td><code>empty_aligned_int8_cpu_tensors</code></td><td>2 MiB 对齐的 pinned host 张量，层间 delta 恒定</td></tr>
+        <tr><td>302</td><td><code>plan_sparse_kv_offload_memory</code></td><td>NPU / DRAM / workload 三方取 min</td></tr>
+        <tr><td>383</td><td><code>allocate_kv_cache_tensors_for_sparse_kv_offload</code></td><td>TP0 分配 host 池；keep_device 时同时分配设备池</td></tr>
+        <tr><td>417</td><td><code>reshape_kv_cache_tensors_for_sparse_kv_offload</code></td><td>把原始缓冲 reshape 成 6 元组（packed 走单腿）</td></tr>
+        <tr><td>488</td><td><code>update_sparse_kv_offload_metadata</code></td><td>req_id（adler32 哈希）与 token→req 映射</td></tr>
+        <tr><td>563</td><td><code>class SparseKVOffloadManager</code></td><td>编排核心</td></tr>
+        <tr><td>884</td><td><code>register_kv_caches</code></td><td>注册 6 元组、广播 GVA、建描述符与 LRU 工作区</td></tr>
+        <tr><td>1344</td><td><code>offload_new_kv</code></td><td>D2H 入口；fused_overlap 捕获时切侧流</td></tr>
+        <tr><td>1388</td><td><code>_offload_new_kv_on_current_stream</code></td><td>构造 2N 条描述符并调 <code>sparse_copy</code></td></tr>
+        <tr><td>1482</td><td><code>onload_topk_kv</code></td><td>H2D 入口：元数据下行 → CPU planner → 描述符上行 → DMA</td></tr>
+        <tr><td>1605</td><td><code>prepare_fused_overlap_external_plan</code></td><td>fused 模式的外部 plan，结果写进 membership map</td></tr>
+        <tr><td>1800</td><td><code>inject_current_kv_into_selection</code></td><td>把本步 decode KV scatter 进 selection 缓冲</td></tr>
+        <tr><td>1828</td><td><code>_onload_topk_kv_cpu</code></td><td>host 回调本体：compact + compute_addrs</td></tr>
+        <tr><td>1912 / 1929</td><td><code>init_ / get_sparse_kv_offload_manager</code></td><td>单例注册与获取</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note" style="margin-top:18px">
+    <b>读源码建议：</b>先看 <code class="inl">register_kv_caches</code>（数据从哪来），
+    再看 <code class="inl">offload_new_kv</code> 与 <code class="inl">onload_topk_kv</code>（两条搬运路径），
+    最后看 <code class="inl">prepare_fused_overlap_external_plan</code>（图模式下的旁路）。
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0 0 6px">
+      <b>说明：</b>本页是代码导读，不是运行时文档。所有示意图与计算器中的数值均为便于理解的示例，
+      不代表真实模型的 page size 或显存占用。
+    </p>
+    <p style="margin:0">
+      来源：<b>vllm_ascend/distributed/kv_transfer/sparse_kv_offload/sparse_kv_offload_manager.py</b>
+      （1931 行）及其调用方 <b>attention/sfa_kv_offload.py</b>、<b>worker/model_runner_v1.py</b>、
+      <b>kv_p2p/sfa_pd_rd2h/worker.py</b>。
+    </p>
+  </div>
+</footer>
+
+<script>
+/* ---------------- reveal + progress + nav ---------------- */
+const io = new IntersectionObserver((entries) => {
+  entries.forEach((e) => { if (e.isIntersecting) e.target.classList.add('in'); });
+}, { threshold: 0.08 });
+document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+const progress = document.getElementById('progress');
+addEventListener('scroll', () => {
+  const h = document.documentElement;
+  const max = h.scrollHeight - h.clientHeight;
+  progress.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+}, { passive: true });
+
+const navLinks = [...document.querySelectorAll('nav.toc a')];
+const sections = navLinks.map((a) => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const navIO = new IntersectionObserver((entries) => {
+  entries.forEach((e) => {
+    if (e.isIntersecting) {
+      navLinks.forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+    }
+  });
+}, { rootMargin: '-15% 0px -70% 0px' });
+sections.forEach((s) => navIO.observe(s));
+
+/* ---------------- 时序图数据 ---------------- */
+const LANES = [
+  { title: 'Attention', sub: 'sfa_kv_offload.py' },
+  { title: 'Manager', sub: 'SparseKVOffloadManager' },
+  { title: 'CPU Planner', sub: 'OpenMP / _C_ascend' },
+  { title: 'memfabric', sub: 'offload.sparse_copy' },
+  { title: 'CPU DRAM Pool', sub: 'pin_memory · TP0' },
+  { title: 'NPU 热行', sub: 'topk_buffer' }
+];
+
+const SEQ = [
+  { from: 0, to: 1, kind: 'req', l: 'offload_new_kv(layer, slots, k, v)',
+    d: '每层 <code class="inl">exec_kv</code> 先算出当前 token 的 k_nope / k_pe，交给 manager。只有 TP0 会真正往下执行；其余 rank 直接返回（decode KV 在 TP 间本就复制）。' },
+  { from: 1, to: 3, kind: 'req', l: 'D2H sparse_copy(src, dst, len, 2N)',
+    d: 'manager 用 <code class="inl">slot_mapping</code> 把目标地址算成 <b>CPU 池基址 + slot × token_bytes</b>，源地址是刚算出的 K/V 行；非法 slot 的 length 被 masked 为 0。' },
+  { from: 3, to: 4, kind: 'data', l: '按 slot 写入 CPU 池（K 行 + V 行）',
+    d: '一次 DMA 写 <b>2N</b> 段（N 条 K + N 条 V）。这是"新 KV 落池"，必须在后面的 top-k 补货之前完成。' },
+  { from: 0, to: 1, kind: 'req', l: 'onload_topk_kv(topk, req_ids, prefix, block_table)',
+    d: '进入注意力前，attention 后端把本层 top-k 结果、请求身份、稳定前缀长度和 block_table 一起交给 manager。' },
+  { from: 1, to: 2, kind: 'req', l: 'sparse_kv_lru_resident_compact(...)',
+    d: '先按层把元数据拷到 pinned CPU 内存（spec decode 下 block_table 按 token→req 展开）。<code class="inl">skip_topk</code> 时整个 planner 被跳过，只按层间 delta 平移指针。' },
+  { from: 2, to: 1, kind: 'ret', l: 'miss_count / miss_tokens / miss_slots',
+    d: '驻留集合求交结果：哪些 token 已在热行（命中），哪些需要补货，以及每个 miss token 可用的目标槽位。' },
+  { from: 1, to: 2, kind: 'req', l: 'sparse_kv_compute_lru_resident_addrs(...)',
+    d: '把 miss token 映射成 CPU 池绝对地址（block_table × block_bytes + 块内偏移），把槽位映射成热行地址，写满 gvas / addr / size 数组。' },
+  { from: 2, to: 1, kind: 'ret', l: 'gvas / addr / size 描述符数组',
+    d: '三个数组都写在同一块 pinned 参数缓冲里；条数与 <code class="inl">max_num_topk_rows × topk × 2</code> 对齐。' },
+  { from: 1, to: 1, kind: 'req', l: '描述符整块 H2D 镜像',
+    d: '四个 <code class="inl">.view()</code> 共享一块缓冲，一次 <code class="inl">copy_</code> 同步到 NPU；捕获时 <code class="inl">non_blocking=True</code>。' },
+  { from: 1, to: 1, kind: 'req', l: 'tp_group.broadcast(∅) 栅栏',
+    d: '确保 TP0 的 D2H 已落池，其他 TP 的 H2D 才能读到。不能用 <code class="inl">barrier()</code> —— 它无法被 graph 捕获。' },
+  { from: 1, to: 3, kind: 'req', l: 'offload.sparse_copy(gvas, addr, size, n)',
+    d: 'onload 的关键 DMA：一次调用把本层所有 top-k 命中行从 host 池搬到本 rank 的热行。' },
+  { from: 3, to: 4, kind: 'data', l: '按源地址读 miss 行',
+    d: '源地址由 planner 编好，memfabric 只负责搬运，不关心 block 语义。' },
+  { from: 3, to: 5, kind: 'data', l: '写入热行 slot（目的地址）',
+    d: '目的地址 = 热行基址 + slot × token_bytes。packed 时 K/V 指向同一行，被写两遍。' },
+  { from: 1, to: 5, kind: 'req', l: 'current_slots_npu 就绪',
+    d: '每 row 的"槽位 → token"映射回传 NPU，注意力据此构造 resident 视图。' },
+  { from: 0, to: 5, kind: 'data', l: '稀疏注意力读热行',
+    d: '用 <code class="inl">resident_block_table / resident_query_lens / resident_seq_lens</code>（线性 arange）直接读热行，真实的 CPU 池 block 映射被完全隐藏。' }
+];
+
+/* ---------------- 时序图渲染 ---------------- */
+const seqSvg = document.getElementById('seqSvg');
+const LEFT = 112, LANE_W = 176, TOP = 104, ROW = 44;
+let seqIdx = 0, seqTimer = null;
+
+function renderSeq() {
+  const w = LEFT + LANE_W * (LANES.length - 1) + 96;
+  const h = TOP + SEQ.length * ROW + 26;
+  seqSvg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  let out = '<defs>' +
+    '<marker id="ma" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#8fb0ff"/></marker>' +
+    '<marker id="mr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#a78bfa"/></marker>' +
+    '<marker id="md" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#7ee3b8"/></marker>' +
+    '</defs>';
+
+  LANES.forEach((ln, i) => {
+    const x = LEFT + i * LANE_W;
+    out += '<rect x="' + (x - LANE_W / 2 + 8) + '" y="14" width="' + (LANE_W - 16) + '" height="58" rx="10" fill="#121b31" stroke="#2b3b62"/>';
+    out += '<text x="' + x + '" y="39" text-anchor="middle" class="lane-t">' + ln.title + '</text>';
+    out += '<text x="' + x + '" y="57" text-anchor="middle" class="lane-s">' + ln.sub + '</text>';
+    out += '<line x1="' + x + '" y1="72" x2="' + x + '" y2="' + (h - 12) + '" class="life"/>';
+  });
+
+  SEQ.forEach((m, i) => {
+    const y = TOP + i * ROW;
+    const x1 = LEFT + m.from * LANE_W;
+    const x2 = LEFT + m.to * LANE_W;
+    const cls = m.kind === 'ret' ? 'line ret' : (m.kind === 'data' ? 'line data' : 'line');
+    const mk = m.kind === 'ret' ? 'mr' : (m.kind === 'data' ? 'md' : 'ma');
+    let shape, lx, anchor;
+    if (m.from === m.to) {
+      shape = '<path class="' + cls + '" d="M ' + x1 + ' ' + y + ' L ' + (x1 + 34) + ' ' + y +
+        ' L ' + (x1 + 34) + ' ' + (y + 15) + ' L ' + (x1 + 3) + ' ' + (y + 15) + '" marker-end="url(#' + mk + ')"/>';
+      lx = x1 + 44; anchor = 'start';
+    } else {
+      const dir = Math.sign(x2 - x1);
+      shape = '<line class="' + cls + '" x1="' + x1 + '" y1="' + y + '" x2="' + (x2 - dir * 5) + '" y2="' + y +
+        '" marker-end="url(#' + mk + ')"/>';
+      lx = (x1 + x2) / 2; anchor = 'middle';
+    }
+    out += '<g class="msg" data-i="' + i + '">' +
+      '<circle class="badge" cx="52" cy="' + y + '" r="11"/>' +
+      '<text class="badge-t" x="52" y="' + (y + 4) + '" text-anchor="middle">' + (i + 1) + '</text>' +
+      shape +
+      '<text class="lbl" x="' + lx + '" y="' + (y - 7) + '" text-anchor="' + anchor + '">' + m.l + '</text>' +
+      '</g>';
+  });
+  seqSvg.innerHTML = out;
+  setStep(0);
+}
+
+function setStep(i) {
+  seqIdx = Math.max(0, Math.min(SEQ.length - 1, i));
+  seqSvg.querySelectorAll('.msg').forEach((g) => {
+    g.classList.toggle('active', Number(g.dataset.i) === seqIdx);
+  });
+  const m = SEQ[seqIdx];
+  document.getElementById('seqCount').textContent = (seqIdx + 1) + ' / ' + SEQ.length;
+  document.getElementById('seqPrev').disabled = seqIdx === 0;
+  document.getElementById('seqNext').disabled = seqIdx === SEQ.length - 1;
+  document.getElementById('seqDetail').innerHTML =
+    '<div class="h"><span class="n">STEP ' + (seqIdx + 1) + '</span><h4>' + m.l + '</h4></div><p>' + m.d + '</p>';
+}
+
+function stopPlay() {
+  if (seqTimer) { clearInterval(seqTimer); seqTimer = null; }
+  document.getElementById('seqPlay').textContent = '自动播放';
+}
+
+document.getElementById('seqNext').addEventListener('click', () => { stopPlay(); setStep(seqIdx + 1); });
+document.getElementById('seqPrev').addEventListener('click', () => { stopPlay(); setStep(seqIdx - 1); });
+document.getElementById('seqReset').addEventListener('click', () => { stopPlay(); setStep(0); });
+document.getElementById('seqPlay').addEventListener('click', (e) => {
+  if (seqTimer) { stopPlay(); return; }
+  if (seqIdx >= SEQ.length - 1) setStep(0);
+  e.target.textContent = '暂停';
+  seqTimer = setInterval(() => {
+    if (seqIdx >= SEQ.length - 1) { stopPlay(); return; }
+    setStep(seqIdx + 1);
+  }, 1700);
+});
+
+renderSeq();
+
+/* ---------------- LRU 热行演示 ---------------- */
+const SLOT_N = 6;
+const LRU_STEPS = [
+  { 0: [3, 5, 7], 1: [4, 6, 8] },
+  { 0: [5, 7, 9], 1: [4, 6, 8] },
+  { 0: [7, 9, 11], 1: [6, 8, 10] },
+  { 0: [9, 11, 13], 1: [8, 10, 12] },
+  { 0: [2, 9, 13], 1: [1, 8, 12] }
+];
+const lruRows = [0, 1].map(() => ({
+  slots: Array(SLOT_N).fill(null),
+  last: Array(SLOT_N).fill(0)
+}));
+let lruStep = -1;
+
+function resetLRU() {
+  lruRows.forEach((r) => { r.slots = Array(SLOT_N).fill(null); r.last = Array(SLOT_N).fill(0); });
+  lruStep = -1;
+  renderLRU(null, [], 0, 0);
+}
+
+function advanceLRU() {
+  if (lruStep >= LRU_STEPS.length - 1) return;
+  lruStep += 1;
+  const step = LRU_STEPS[lruStep];
+  const prev = lruRows.map((r) => r.slots.slice());
+  let hits = 0, misses = 0;
+  const evicted = [];
+
+  lruRows.forEach((row, ri) => {
+    const tokens = step[ri];
+    const before = new Set(row.slots.filter((v) => v !== null));
+    const hitTokens = tokens.filter((t) => before.has(t));
+    const missTokens = tokens.filter((t) => !before.has(t));
+    hits += hitTokens.length;
+    misses += missTokens.length;
+
+    missTokens.forEach((t) => {
+      let idx = row.slots.indexOf(null);
+      if (idx === -1) {
+        const cand = row.slots
+          .map((v, ix) => ({ v, ix }))
+          .filter((o) => o.v !== null && !tokens.includes(o.v));
+        const pool = cand.length ? cand : row.slots.map((v, ix) => ({ v, ix }));
+        pool.sort((a, b) => row.last[a.ix] - row.last[b.ix]);
+        idx = pool[0].ix;
+        evicted.push(row.slots[idx]);
+      }
+      row.slots[idx] = t;
+    });
+    tokens.forEach((t) => {
+      const ix = row.slots.indexOf(t);
+      if (ix >= 0) row.last[ix] = lruStep + 1;
+    });
+  });
+  renderLRU(prev, evicted, hits, misses);
+}
+
+function renderLRU(prev, evicted, hits, misses) {
+  lruRows.forEach((row, ri) => {
+    const host = document.getElementById('lruRow' + ri);
+    let html = '';
+    row.slots.forEach((tok, ix) => {
+      let cls = 'cell';
+      if (tok === null) cls += ' vac';
+      else {
+        const wasThere = prev && prev[ri][ix] === tok;
+        const inNew = lruStep >= 0 && LRU_STEPS[lruStep][ri].includes(tok);
+        if (inNew && wasThere) cls += ' hit';
+        else if (inNew) cls += ' new';
+        else cls += ' keep';
+      }
+      html += '<div class="' + cls + '"><span class="sl">slot ' + ix + '</span><span class="tk">' +
+        (tok === null ? '—' : tok) + '</span></div>';
+    });
+    host.innerHTML = html;
+  });
+
+  const cur = lruStep >= 0 ? LRU_STEPS[lruStep] : null;
+  const chips = [];
+  if (cur) chips.push('<span>row0 top-k [' + cur[0].join(', ') + '] · row1 top-k [' + cur[1].join(', ') + ']</span>');
+  chips.push('<span class="g">命中 ' + hits + '</span>');
+  chips.push('<span class="w">未命中 ' + misses + '</span>');
+  if (evicted.length) chips.push('<span class="r">淘汰 [' + evicted.join(', ') + ']</span>');
+  document.getElementById('lruStat').innerHTML = chips.join('');
+  document.getElementById('lruCount').textContent = (lruStep + 1) + ' / ' + LRU_STEPS.length + ' 步';
+  document.getElementById('lruNext').disabled = lruStep >= LRU_STEPS.length - 1;
+}
+
+document.getElementById('lruNext').addEventListener('click', advanceLRU);
+document.getElementById('lruReset').addEventListener('click', resetLRU);
+resetLRU();
+
+/* ---------------- 内存预算计算器 ---------------- */
+const $ = (id) => document.getElementById(id);
+
+function fmtN(n) { return n.toLocaleString('zh-CN'); }
+
+function calcBudget() {
+  const dram = +$('bDram').value;
+  const dev = +$('bDev').value;
+  const L = +$('bLayers').value;
+  const hostMb = +$('bHost').value;
+  const devMb = +$('bDevP').value;
+  const seqs = +$('bSeqs').value;
+  const blk = +$('bBlk').value;
+  const keep = $('bKeep').checked;
+
+  $('vDram').textContent = dram;
+  $('vDev').textContent = dev;
+  $('vLayers').textContent = L;
+  $('vHost').textContent = hostMb.toFixed(1);
+  $('vDevP').textContent = devMb.toFixed(1);
+  $('vSeqs').textContent = seqs;
+  $('vBlk').textContent = blk;
+
+  const alignMiB = L * 6;                 // 3 × 2 MiB per host layer
+  const hostPage = L * hostMb;
+  const devPage = L * devMb;
+  const dramBlocks = Math.max(0, Math.floor((dram * 1024 - alignMiB) / hostPage));
+  const npuPage = keep ? hostPage + devPage : devPage;
+  const npuBlocks = Math.floor((dev * 1024) / npuPage);
+  const wlBlocks = blk * seqs + 1;        // + 1 null block
+
+  const limits = { npu: npuBlocks, dram: dramBlocks, workload: wlBlocks };
+  const names = { npu: 'NPU 显存', dram: 'DRAM 预算', workload: 'workload 需求' };
+  let key = 'npu';
+  if (limits.dram < limits[key]) key = 'dram';
+  if (limits.workload < limits[key]) key = 'workload';
+  const finalBlocks = limits[key];
+
+  const maxV = Math.max(npuBlocks, dramBlocks, wlBlocks, 1);
+  const paint = (rowId, fillId, valId, v) => {
+    $(rowId).classList.remove('win');
+    $(fillId).style.width = Math.min(100, (v / maxV) * 100) + '%';
+    $(valId).textContent = fmtN(v);
+  };
+  paint('rowNpu', 'fillNpu', 'valNpu', npuBlocks);
+  paint('rowDram', 'fillDram', 'valDram', dramBlocks);
+  paint('rowWl', 'fillWl', 'valWl', wlBlocks);
+  const rowOf = { npu: 'rowNpu', dram: 'rowDram', workload: 'rowWl' };
+  $(rowOf[key]).classList.add('win');
+
+  let html = '限制因素：<strong>' + names[key] + '</strong> → 可见 block 数 ' +
+    '<span class="big">' + fmtN(finalBlocks) + '</span><br>' +
+    'host ≈ ' + (finalBlocks * hostPage / 1024).toFixed(2) + ' GiB · device ≈ ' +
+    (finalBlocks * npuPage / 1024).toFixed(2) + ' GiB';
+  if (key === 'dram' && dramBlocks < npuBlocks) {
+    html += '<br><span style="color:#ffe6a8">DRAM 成为瓶颈：调大 sparse_kv_offload_config.dram_size_per_dp_GB 可解锁更多 NPU 容量。</span>';
+  }
+  $('verdict').innerHTML = html;
+}
+
+['bDram', 'bDev', 'bLayers', 'bHost', 'bDevP', 'bSeqs', 'bBlk', 'bKeep'].forEach((id) => {
+  $(id).addEventListener('input', calcBudget);
+  $(id).addEventListener('change', calcBudget);
+});
+calcBudget();
+</script>
+</body>
+</html>
