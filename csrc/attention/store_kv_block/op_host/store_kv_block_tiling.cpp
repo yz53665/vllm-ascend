@@ -73,13 +73,16 @@ static ge::graphStatus DoCommonTiling(gert::TilingContext* context, StoreKVBlock
 
     uint32_t typeByte = 0;
     auto xDataType = context->GetInputDesc(DIM_0)->GetDataType();
-    if (xDataType == ge::DataType::DT_INT8) {
+    // FP8 shares the 1-byte copy kernel with INT8, and FLOAT32 shares the
+    // 4-byte copy kernel with INT32; both are pure DataCopyPad paths.
+    if (xDataType == ge::DataType::DT_INT8 || xDataType == ge::DataType::DT_FLOAT8_E4M3FN) {
         typeByte = sizeof(int8_t);
         params.tilingKey = 1;
     } else if (xDataType == ge::DataType::DT_FLOAT16 || xDataType == ge::DataType::DT_BF16) {
         typeByte = sizeof(uint16_t);
         params.tilingKey = 2;
-    } else if (xDataType == ge::DataType::DT_INT32 || xDataType == ge::DataType::DT_UINT32) {
+    } else if (xDataType == ge::DataType::DT_INT32 || xDataType == ge::DataType::DT_UINT32 ||
+               xDataType == ge::DataType::DT_FLOAT32) {
         typeByte = sizeof(uint32_t);
         params.tilingKey = 4;
     } else {
