@@ -152,8 +152,8 @@ def test_myops_fp8_key_float32_scale(num_tokens, num_head, block_size, num_block
         scale_npu, scale_cache_npu, group_len, group_key_idx, group_key_cache_idx, block_size
     )
 
-    torch.testing.assert_close(key_cache_expect.float(), key_cache_npu.float(), atol=0, rtol=0)
-    torch.testing.assert_close(scale_cache_expect, scale_cache_npu, atol=0, rtol=0)
+    torch.testing.assert_close(key_cache_expect.float(), key_cache_npu.float().cpu(), atol=0, rtol=0)
+    torch.testing.assert_close(scale_cache_expect, scale_cache_npu.cpu(), atol=0, rtol=0)
 
     gc.collect()
     torch.npu.empty_cache()
