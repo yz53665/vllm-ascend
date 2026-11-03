@@ -2541,7 +2541,8 @@ int64_t compute_lru_resident_addrs(const at::Tensor& miss_count, const at::Tenso
                                    const int64_t gvas_v_base, const int64_t addr_k_base, const int64_t addr_v_base,
                                    const int64_t resident_capacity, const int64_t max_num_threads,
                                    at::Tensor& gvas_buffer, at::Tensor& addr_buffer, at::Tensor& size_buffer,
-                                   at::Tensor& num_tokens_buffer) {
+                                   at::Tensor& num_tokens_buffer, const int64_t num_legs) {
+  TORCH_CHECK(num_legs == 1 || num_legs == 2, "num_legs must be 1 or 2, got ", num_legs);
   const int32_t num_reqs = miss_tokens.size(0);
   const int32_t topk = miss_tokens.size(1);
   const int32_t max_num_tokens_to_load = num_reqs * topk;
@@ -2551,9 +2552,9 @@ int64_t compute_lru_resident_addrs(const at::Tensor& miss_count, const at::Tenso
   TORCH_CHECK(miss_count.size(0) >= num_reqs, "miss_count size not enough for loading.");
   TORCH_CHECK(miss_slots.size(0) == num_reqs && miss_slots.size(1) == topk,
               "miss_slots shape should match miss_tokens.");
-  TORCH_CHECK(gvas_buffer.size(0) >= max_num_tokens_to_load * 2, "gvas_buffer size not enough for loading.");
-  TORCH_CHECK(addr_buffer.size(0) >= max_num_tokens_to_load * 2, "addr_buffer size not enough for loading.");
-  TORCH_CHECK(size_buffer.size(0) >= max_num_tokens_to_load * 2, "size_buffer size not enough for loading.");
+  TORCH_CHECK(gvas_buffer.size(0) >= max_num_tokens_to_load * num_legs, "gvas_buffer size not enough for loading.");
+  TORCH_CHECK(addr_buffer.size(0) >= max_num_tokens_to_load * num_legs, "addr_buffer size not enough for loading.");
+  TORCH_CHECK(size_buffer.size(0) >= max_num_tokens_to_load * num_legs, "size_buffer size not enough for loading.");
   TORCH_CHECK(miss_count.scalar_type() == at::kInt, "miss_count wrong dtype, should be int32.");
   TORCH_CHECK(miss_tokens.scalar_type() == at::kInt, "miss_tokens wrong dtype, should be int32.");
   TORCH_CHECK(miss_slots.scalar_type() == at::kInt, "miss_slots wrong dtype, should be int32.");
@@ -2607,20 +2608,25 @@ int64_t compute_lru_resident_addrs(const at::Tensor& miss_count, const at::Tenso
       const int32_t offset_in_block = token % static_cast<int32_t>(block_size);
       const int32_t block_indice = block_table_ptr[req_idx * max_num_blocks + block_id];
       const int64_t gvas_k = gvas_k_base + block_indice * block_size_bytes_k + offset_in_block * token_size_bytes_k;
-      const int64_t gvas_v = gvas_v_base + block_indice * block_size_bytes_v + offset_in_block * token_size_bytes_v;
       const int64_t addr_k = addr_k_base + (req_idx * resident_capacity + slot) * token_size_bytes_k;
-      const int64_t addr_v = addr_v_base + (req_idx * resident_capacity + slot) * token_size_bytes_v;
       gvas_buffer_ptr[req_start_loc_k + idx] = gvas_k;
-      gvas_buffer_ptr[req_start_loc_v + idx] = gvas_v;
       addr_buffer_ptr[req_start_loc_k + idx] = addr_k;
-      addr_buffer_ptr[req_start_loc_v + idx] = addr_v;
+      if (num_legs == 2) {
+        const int64_t gvas_v =
+            gvas_v_base + block_indice * block_size_bytes_v + offset_in_block * token_size_bytes_v;
+        const int64_t addr_v = addr_v_base + (req_idx * resident_capacity + slot) * token_size_bytes_v;
+        gvas_buffer_ptr[req_start_loc_v + idx] = gvas_v;
+        addr_buffer_ptr[req_start_loc_v + idx] = addr_v;
+      }
     }
   }
 
   std::fill_n(size_buffer_ptr, num_tokens_to_load_sum, token_size_bytes_k);
-  std::fill_n(&(size_buffer_ptr[num_tokens_to_load_sum]), num_tokens_to_load_sum, token_size_bytes_v);
+  if (num_legs == 2) {
+    std::fill_n(&(size_buffer_ptr[num_tokens_to_load_sum]), num_tokens_to_load_sum, token_size_bytes_v);
+  }
 
-  num_tokens_buffer_ptr[0] = num_tokens_to_load_sum * 2;
+  num_tokens_buffer_ptr[0] = static_cast<int32_t>(num_tokens_to_load_sum * num_legs);
   return num_tokens_to_load_sum;
 }
 
@@ -3033,7 +3039,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
             "Tensor block_table, int block_size, int token_size_bytes_k, int token_size_bytes_v, "
             "int gvas_k_base, int gvas_v_base, int addr_k_base, int addr_v_base, int resident_capacity, "
             "int max_num_threads, Tensor(a!) gvas_buffer, Tensor(b!) addr_buffer, Tensor(c!) size_buffer, "
-            "Tensor(d!) num_tokens_buffer) -> int");
+            "Tensor(d!) num_tokens_buffer, int num_legs) -> int");
     ops.impl("sparse_kv_compute_lru_resident_addrs", torch::kCPU,
              &vllm_ascend::compute_lru_resident_addrs);
 

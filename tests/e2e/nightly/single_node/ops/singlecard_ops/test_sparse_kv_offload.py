@@ -174,6 +174,7 @@ def test_sparse_kv_compute_lru_resident_addrs(sparse_kv_ops):
         addr_buffer,
         size_buffer,
         num_tokens_buffer,
+        2,
     )
 
     assert num_tokens_to_load == 3
@@ -181,6 +182,39 @@ def test_sparse_kv_compute_lru_resident_addrs(sparse_kv_ops):
     assert gvas_buffer[:6].tolist() == [1328, 1368, 1672, 2492, 2552, 3008]
     assert addr_buffer[:6].tolist() == [3000, 3016, 3040, 4000, 4024, 4060]
     assert size_buffer[:6].tolist() == [8, 8, 8, 12, 12, 12]
+
+    # num_legs=1: a packed SFA main row doubles as K and V, so only the K leg is emitted.
+    gvas_buffer.fill_(-1)
+    addr_buffer.fill_(-1)
+    size_buffer.fill_(-1)
+    num_tokens_buffer.zero_()
+    num_tokens_to_load = sparse_kv_ops.sparse_kv_compute_lru_resident_addrs(
+        miss_count,
+        miss_tokens,
+        miss_slots,
+        block_table,
+        4,
+        8,
+        12,
+        1000,
+        2000,
+        3000,
+        4000,
+        4,
+        2,
+        gvas_buffer,
+        addr_buffer,
+        size_buffer,
+        num_tokens_buffer,
+        1,
+    )
+
+    assert num_tokens_to_load == 3
+    assert num_tokens_buffer.item() == 3
+    assert gvas_buffer[:3].tolist() == [1328, 1368, 1672]
+    assert gvas_buffer[3:6].tolist() == [-1, -1, -1]
+    assert addr_buffer[:3].tolist() == [3000, 3016, 3040]
+    assert size_buffer[:3].tolist() == [8, 8, 8]
 
 
 def test_stable_rows_suffix_invalidation_and_plan_encoding(sparse_kv_ops):

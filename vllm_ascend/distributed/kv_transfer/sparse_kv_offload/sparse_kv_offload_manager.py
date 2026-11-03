@@ -933,7 +933,7 @@ class SparseKVOffloadManager:
         # D2H uses a separate descriptor set from the shared H2D buffers below.
         # Both prefill (colocate debug only, gated by keep_device_kv_cache)
         # and decode can produce up to max_num_tokens rows.
-        d2h_descriptor_rows = self.max_num_tokens * 2
+        d2h_descriptor_rows = self.max_num_tokens * self.main_leg_count
         device = self.topk_buffers_k[0].device
         self.d2h_src_ptrs_npu = torch.empty(d2h_descriptor_rows, dtype=torch.int64, device=device)
         self.d2h_dst_ptrs_npu = torch.empty(d2h_descriptor_rows, dtype=torch.int64, device=device)
@@ -1029,11 +1029,12 @@ class SparseKVOffloadManager:
             self._bind_copy_sfa_bases()
 
         gvas_buffer_offset = 0
-        gvas_buffer_size_bytes = self.max_num_topk_rows * self.topk * 2 * 8  # 2: k+v, 8: int64
+        main_legs = self.main_leg_count
+        gvas_buffer_size_bytes = self.max_num_topk_rows * self.topk * main_legs * 8  # 8: int64
         addr_buffer_offset = gvas_buffer_offset + gvas_buffer_size_bytes
-        addr_buffer_size_bytes = self.max_num_topk_rows * self.topk * 2 * 8
+        addr_buffer_size_bytes = self.max_num_topk_rows * self.topk * main_legs * 8
         size_buffer_offset = addr_buffer_offset + addr_buffer_size_bytes
-        size_buffer_size_bytes = self.max_num_topk_rows * self.topk * 2 * 4  # 2: k+v, 4: int32
+        size_buffer_size_bytes = self.max_num_topk_rows * self.topk * main_legs * 4  # 4: int32
         num_tokens_buffer_offset = size_buffer_offset + size_buffer_size_bytes
         num_tokens_buffer_size_bytes = 4  # 1 * int32
         sparse_copy_args_buffer_size_bytes = (
@@ -1058,9 +1059,9 @@ class SparseKVOffloadManager:
         self.num_tokens_buffer_cpu = self.sparse_copy_args_buffer_cpu[
             num_tokens_buffer_offset : num_tokens_buffer_offset + num_tokens_buffer_size_bytes
         ].view(torch.int32)
-        assert self.gvas_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
-        assert self.addr_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
-        assert self.size_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
+        assert self.gvas_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
+        assert self.addr_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
+        assert self.size_buffer_cpu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
         assert self.num_tokens_buffer_cpu.shape == torch.Size([1])
 
         self.gvas_buffer_npu = self.sparse_copy_args_buffer_npu[
@@ -1075,9 +1076,9 @@ class SparseKVOffloadManager:
         self.num_tokens_buffer_npu = self.sparse_copy_args_buffer_npu[
             num_tokens_buffer_offset : num_tokens_buffer_offset + num_tokens_buffer_size_bytes
         ].view(torch.int32)
-        assert self.gvas_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
-        assert self.addr_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
-        assert self.size_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * 2])
+        assert self.gvas_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
+        assert self.addr_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
+        assert self.size_buffer_npu.shape == torch.Size([self.max_num_topk_rows * self.topk * main_legs])
         assert self.num_tokens_buffer_npu.shape == torch.Size([1])
 
         # topk cache reuse related
@@ -1459,15 +1460,19 @@ class SparseKVOffloadManager:
 
         dst_k = int(k_cache_cpu.data_ptr()) + safe_slots * self.token_size_bytes_k
         dst_v = int(v_cache_cpu.data_ptr()) + safe_slots * self.token_size_bytes_v
+        # A packed SFA main row doubles as K and V, so a single descriptor leg
+        # already carries every byte; the V leg would copy the same rows again.
+        legs = self.main_leg_count
         self.d2h_src_ptrs_npu[:token_count].copy_(src_k)
-        self.d2h_src_ptrs_npu[token_count : 2 * token_count].copy_(src_v)
         self.d2h_dst_ptrs_npu[:token_count].copy_(dst_k)
-        self.d2h_dst_ptrs_npu[token_count : 2 * token_count].copy_(dst_v)
         self.d2h_lengths_npu[:token_count].fill_(self.token_size_bytes_k)
-        self.d2h_lengths_npu[token_count : 2 * token_count].fill_(self.token_size_bytes_v)
         self.d2h_lengths_npu[:token_count].masked_fill_(~valid, 0)
-        self.d2h_lengths_npu[token_count : 2 * token_count].masked_fill_(~valid, 0)
-        self.d2h_size_npu.fill_(2 * token_count)
+        if legs == 2:
+            self.d2h_src_ptrs_npu[token_count : 2 * token_count].copy_(src_v)
+            self.d2h_dst_ptrs_npu[token_count : 2 * token_count].copy_(dst_v)
+            self.d2h_lengths_npu[token_count : 2 * token_count].fill_(self.token_size_bytes_v)
+            self.d2h_lengths_npu[token_count : 2 * token_count].masked_fill_(~valid, 0)
+        self.d2h_size_npu.fill_(legs * token_count)
 
         result = offload.sparse_copy(
             self.d2h_src_ptrs_npu,
@@ -1568,6 +1573,7 @@ class SparseKVOffloadManager:
                 self.addr_buffer_cpu,
                 self.size_buffer_cpu,
                 self.num_tokens_buffer_cpu,
+                self.main_leg_count,
                 layer_id,
             )
 
@@ -1859,6 +1865,7 @@ class SparseKVOffloadManager:
             addr_buffer,
             size_buffer,
             num_tokens_buffer,
+            main_leg_count,
             layer_id,
         ) = args
         sparse_kv_ops = _sparse_kv_ops()
@@ -1903,6 +1910,7 @@ class SparseKVOffloadManager:
             addr_buffer,
             size_buffer,
             num_tokens_buffer,
+            main_leg_count,
         )
 
 
