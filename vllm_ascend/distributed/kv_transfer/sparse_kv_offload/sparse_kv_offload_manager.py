@@ -639,6 +639,7 @@ class SparseKVOffloadManager:
                 f"num_blocks={kv_cache_config.num_blocks}"
             )
         actual_pool_size_bytes = min(planned_pool_size_bytes, dram_limit_bytes)
+        self.cpu_pool_reserve_bytes = actual_pool_size_bytes
         logger.info(
             "SparseKVOffloadManager starts CPU KV pool initialization: "
             "planned=%.2f GiB, configured_limit=%s GiB, num_blocks=%s.",
@@ -741,6 +742,44 @@ class SparseKVOffloadManager:
                 f"layer_name={layer_name}, registered_layers=[{registered_layers}]"
             )
         return layer_id
+
+    def _validate_host_pool_bounds(self) -> None:
+        """Reject host KV slabs that fall outside the reserved CPU pool.
+
+        The reservation is derived from the planned per-layer slabs, so any
+        mismatch between the planned and the actually allocated host layers
+        pushes the last slab (the MTP layer) past the end of the pool. The
+        device only reports that much later as an aivec "MTE DDR address out
+        of range", so check the ranges up front and fail with the real cause.
+        """
+        num_blocks = self.kv_cache_config.num_blocks
+        pool_start = min(min(self.gvas_k_bases), min(self.gvas_v_bases))
+        pool_end = pool_start
+        for layer_id in range(self.num_layers):
+            k_len, v_len = self.cpu_block_lens[layer_id]
+            pool_end = max(
+                pool_end,
+                self.gvas_k_bases[layer_id] + k_len * num_blocks,
+                self.gvas_v_bases[layer_id] + v_len * num_blocks,
+            )
+        if pool_end - pool_start > self.cpu_pool_reserve_bytes:
+            raise RuntimeError(
+                "Sparse KV offload host KV pool is smaller than the allocated host slabs: "
+                f"slabs=[{pool_start:#x}, {pool_end:#x}) span "
+                f"{(pool_end - pool_start) / (1 << 30):.2f} GiB, reserved "
+                f"{self.cpu_pool_reserve_bytes / (1 << 30):.2f} GiB, "
+                f"host_layers={self.num_layers}. Increase "
+                "sparse_kv_offload_config.dram_size_per_dp_GB."
+            )
+        logger.info(
+            "Sparse KV offload host pool spans [%#x, %#x) = %.2f GiB inside a %.2f GiB "
+            "reservation across %s host layers.",
+            pool_start,
+            pool_end,
+            (pool_end - pool_start) / (1 << 30),
+            self.cpu_pool_reserve_bytes / (1 << 30),
+            self.num_layers,
+        )
 
     def _restore_bfloat16_tensor(self, ptr: int, shape: list[int]) -> torch.Tensor:
         view = _sparse_kv_ops().sparse_kv_restore_bfloat16_tensor(ptr, shape)
@@ -1011,6 +1050,7 @@ class SparseKVOffloadManager:
                     cpu_block_lens_tensor[layer_id, 1].item(),
                 )
             )
+        self._validate_host_pool_bounds()
 
         if (self.use_fused_overlap or self.use_fused_copy_sfa) and self.tp_rank != 0:
             cpu_k_shape = [int(x) for x in shape_k_tensor.tolist()]

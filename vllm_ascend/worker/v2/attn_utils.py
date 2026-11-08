@@ -94,6 +94,7 @@ from vllm_ascend.utils import (
     enable_sfa_dcp_replicated_indexer,
     get_kv_cache_tensor_layers,
     is_hidden_state_cache_spec,
+    is_mtp_layer,
     kv_cache_spec_uses_packed_sfa_main_cache,
 )
 from vllm_ascend.worker.kvpp_cache import allocate_kvpp_cache
@@ -261,7 +262,9 @@ def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
                 dtype=dtype,
                 cache_dtype_str=cache_dtype_str,
                 cache_sparse_sfa_c8=cache_sparse_sfa_c8,
-                store_on_host=enable_sfa(vllm_config) and get_ascend_config().sparse_kv_offload_config.enabled,
+                store_on_host=enable_sfa(vllm_config)
+                and get_ascend_config().sparse_kv_offload_config.enabled
+                and not is_mtp_layer(vllm_config.model_config.hf_text_config, layer_name),
                 cache_sparse_sfa_turboquant=cache_sparse_sfa_turboquant,
                 non_causal_multi_token_decode=spec.non_causal_multi_token_decode,
                 model_version=model_version,

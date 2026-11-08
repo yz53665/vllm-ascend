@@ -213,6 +213,7 @@ from vllm_ascend.utils import (
     global_stream,
     is_c8_mxfp_kv_quant,
     is_hidden_state_cache_spec,
+    is_mtp_layer,
     is_pd_decode_recompute_scheduler_enabled,
     is_score_encoder_cache_manager,
     kv_cache_spec_uses_packed_sfa_main_cache,
@@ -5277,7 +5278,7 @@ class NPUModelRunner(GPUModelRunner):
                             k_tensor_split_factor, v_tensor_split_factor = calc_split_factor(kv_head_dim_list)
                         k_tensor_size = int(kv_cache_tensor_size // k_tensor_split_factor)
                         v_tensor_size = int(kv_cache_tensor_size // v_tensor_split_factor)
-                    if self.sparse_kv_offload_enabled:
+                    if self.sparse_kv_offload_enabled and getattr(current_kv_cache_spec, "store_on_host", False):
                         assert self.use_sparse, "Sparse KV offload only support sparse attention."
                         # A packed SFA main cache has one byte row per token, so
                         # the offload manager allocates a single main leg there.
@@ -5597,7 +5598,7 @@ class NPUModelRunner(GPUModelRunner):
                     # unpack them as a K/V tuple.
                     current_sparse_sfa_c8 = kv_cache_spec_uses_sparse_sfa_c8(current_kv_cache_spec)
                     current_packed_sfa_main_cache = kv_cache_spec_uses_packed_sfa_main_cache(current_kv_cache_spec)
-                    if self.sparse_kv_offload_enabled:
+                    if self.sparse_kv_offload_enabled and getattr(current_kv_cache_spec, "store_on_host", False):
                         assert self.use_sparse, "Sparse KV offload only support sparse attention."
                         reshaped_tensors = reshape_kv_cache_tensors_for_sparse_kv_offload(
                             kv_cache_raw_tensors[layer_name],
@@ -6225,7 +6226,8 @@ class NPUModelRunner(GPUModelRunner):
                         cache_dtype_str=self.vllm_config.cache_config.cache_dtype,
                         cache_sparse_sfa_c8=cache_sparse_sfa_c8,
                         cache_sparse_sfa_turboquant=cache_sparse_sfa_turboquant,
-                        store_on_host=self.sparse_kv_offload_enabled,
+                        store_on_host=self.sparse_kv_offload_enabled
+                        and not is_mtp_layer(self.model_config.hf_text_config, layer_name),
                         model_version=model_version,
                         indexes_kv_by_block_stride=indexes_kv_by_block_stride,
                     )

@@ -59,6 +59,7 @@ from vllm_ascend.device.device_op import DeviceOperator
 from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.sparse_kv_offload_manager import (
     FSA_SELECTION_MEMBERSHIP_CONTROL_INT16_COUNT,
     FSA_SELECTION_MEMBERSHIP_CONTROL_OFFSET_INT16_CNT,
+    OFFLOAD_KV_CACHE_TUPLE_LEN,
     get_sparse_kv_offload_manager,
 )
 from vllm_ascend.utils import enable_dsa_cp
@@ -905,6 +906,10 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         slots: torch.Tensor,
         attn_metadata: AscendSFAMetadata,
     ):
+        if kv_cache is None or len(kv_cache) != OFFLOAD_KV_CACHE_TUPLE_LEN:
+            # Layers excluded from the host offload (the MTP head) keep a plain
+            # paged device cache, so run the base implementation unchanged.
+            return super().exec_kv(kv_no_split, cos, sin, kv_cache, slots, attn_metadata)
         if self.uses_packed_sfa_main_cache:
             # The packed components are produced by the base implementation and
             # pushed to the CPU pool from _store_parallel_kv.
@@ -974,7 +979,11 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         attn_metadata: M,
         full_gather_o_proj_enabled: bool,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        if not self.uses_packed_sfa_main_cache:
+        if not self.uses_packed_sfa_main_cache or (
+            kv_cache is not None and len(kv_cache) != OFFLOAD_KV_CACHE_TUPLE_LEN
+        ):
+            # Non-packed caches and layers excluded from the host offload (the
+            # MTP head) keep their rows in their own device cache only.
             return super()._store_parallel_kv(
                 k_pe,
                 k_nope,
@@ -1686,6 +1695,19 @@ class AscendSFAKVOffloadImpl(AscendSFAImpl):
         num_decodes = int(getattr(attn_metadata, "num_decodes", 0) or 0)
         num_decode_tokens = int(getattr(attn_metadata, "num_decode_tokens", 0) or 0)
         num_prefills = int(getattr(attn_metadata, "num_prefills", 0) or 0)
+        if kv_cache is None or len(kv_cache) != OFFLOAD_KV_CACHE_TUPLE_LEN:
+            # Layers excluded from the host offload (the MTP head) read their
+            # plain paged device cache through the base implementation.
+            return super()._execute_sparse_flash_attention_process(
+                ql_nope,
+                q_pe,
+                kv_cache,
+                topk_indices,
+                attn_metadata,
+                actual_seq_lengths_query,
+                actual_seq_lengths_key,
+                block_table=block_table,
+            )
         manager = get_sparse_kv_offload_manager()
         layer_name = self._offload_layer_name()
 
