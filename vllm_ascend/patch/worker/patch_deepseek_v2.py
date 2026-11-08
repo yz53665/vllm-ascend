@@ -411,7 +411,11 @@ def _patched_forward(
     if not pp_group.is_last_rank:
         pp_output = IntermediateTensors({"hidden_states": hidden_states, "residual": residual})
         if self._use_upstream_aux_relay:
-            pp_output.tensors.update(self.pack_local_aux_hidden_states(aux_hidden_states))
+            # Avoid dict.update here: vLLM's compile wrapper rejects any name
+            # "update" in the transformed bytecode when cudagraph is enabled,
+            # even for a plain dict mutation on a branch that never runs.
+            for key, value in dict(self.pack_local_aux_hidden_states(aux_hidden_states)).items():
+                pp_output.tensors[key] = value
         else:
             pp_transport.add_pp_transport_tensors(
                 pp_output,
