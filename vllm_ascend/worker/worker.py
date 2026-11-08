@@ -90,6 +90,7 @@ from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.layerwise_cache_la
     build_layerwise_reuse_layout,
     get_layerwise_physical_layer_index,
     get_layerwise_reuse_config,
+    layerwise_physical_page_bytes,
 )
 from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.sparse_kv_offload_manager import (
     plan_sparse_kv_offload_memory,
@@ -676,13 +677,17 @@ class NPUWorker(WorkerBase):
         # vLLM #51718 removed the DSV4-specific packed planner. Ascend restores
         # that shared-tuple layout in patch_kv_cache_utils, so DSV4 already fits
         # all groups in one physical budget and must not take the generic
-        # per-layer multi-group scale below.
+        # per-layer multi-group scale below. GLM-Next likewise owns a pooled
+        # slot planner, so its descriptors already cover every group inside the
+        # pool budget.
         for group in kv_cache_groups:
             group_spec = group.kv_cache_spec
             specs = (
                 group_spec.kv_cache_specs.values() if isinstance(group_spec, UniformTypeKVCacheSpecs) else (group_spec,)
             )
-            if any(getattr(spec, "model_version", None) in {"deepseek_v4", "deepseek_v41"} for spec in specs):
+            if any(
+                getattr(spec, "model_version", None) in {"deepseek_v4", "deepseek_v41", "glm5_next"} for spec in specs
+            ):
                 return available_memory
 
         # vLLM #51718 overlays KV cache groups in one standardized backing
@@ -1096,16 +1101,35 @@ class NPUWorker(WorkerBase):
             return num_layers, num_layers, 1.0
         num_buffer_assignments = len(reuse_layout.buffer_slots)
 
-        logical_page_bytes = sum(spec.page_size_bytes for spec in kv_cache_spec.values())
-        physical_page_bytes = sum(kv_cache_spec[name].page_size_bytes for name in excluded_layer_names)
-        for slot in reuse_layout.buffer_slots:
-            physical_page_bytes += reuse_layout.layer_cache_specs[slot[0]].main.spec.page_size_bytes
-            for layer in slot:
-                indexer = reuse_layout.layer_cache_specs[layer].indexer
-                if indexer is not None:
-                    physical_page_bytes += indexer.spec.page_size_bytes
-                    break
+        logical_page_bytes = self._layerwise_logical_page_bytes(kv_cache_spec)
+        physical_page_bytes = layerwise_physical_page_bytes(
+            reuse_layout,
+            kv_cache_spec,
+            excluded_layer_names,
+        )
+        if physical_page_bytes <= 0:
+            return num_layers, num_buffer_assignments, 1.0
         return num_layers, num_buffer_assignments, logical_page_bytes / physical_page_bytes
+
+    def _layerwise_logical_page_bytes(self, kv_cache_spec: dict[str, KVCacheSpec]) -> int:
+        """Bytes one block costs under the unshared planner layout.
+
+        Layerwise reuse only shrinks the physical descriptor set. The engine
+        still computes ``num_blocks`` from the planner's per-block bytes, so the
+        worker must scale its budget by the ratio of that planner cost to the
+        reused physical cost. GLM-Next packs several caches into shared slots,
+        so its planner cost must come from the pool helper rather than a plain
+        per-layer sum.
+        """
+        if any(getattr(spec, "model_version", None) == "glm5_next" for spec in kv_cache_spec.values()):
+            from vllm_ascend.models.glm5next.cache_config import (
+                get_glm5_next_kv_cache_groups,
+                get_glm5_next_pool_bytes_per_block,
+            )
+
+            groups = get_glm5_next_kv_cache_groups(self.vllm_config, dict(kv_cache_spec))
+            return get_glm5_next_pool_bytes_per_block(groups)
+        return sum(spec.page_size_bytes for spec in kv_cache_spec.values())
 
     def get_kv_cache_spec(self) -> dict[str, KVCacheSpec]:
         kv_cache_spec = self.model_runner.get_kv_cache_spec()

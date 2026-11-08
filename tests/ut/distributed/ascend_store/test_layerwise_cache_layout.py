@@ -10,13 +10,18 @@ from vllm.v1.kv_cache_interface import (
     UniformTypeKVCacheSpecs,
 )
 
-from vllm_ascend.core.kv_cache_interface import AscendMLAAttentionSpec, AscendSFAIndexerCacheSpec
+from vllm_ascend.core.kv_cache_interface import (
+    AscendIndexerKPoolTailSpec,
+    AscendMLAAttentionSpec,
+    AscendSFAIndexerCacheSpec,
+)
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.layerwise_cache_layout import (
     apply_layerwise_kv_cache_plan,
     build_layerwise_cache_layout,
     build_layerwise_reuse_layout,
     get_layerwise_physical_layer_index,
     get_layerwise_reuse_config,
+    layerwise_physical_page_bytes,
 )
 from vllm_ascend.utils import get_kv_cache_tensor_layers
 
@@ -40,7 +45,7 @@ def _make_full_attention_spec(
     )
 
 
-def _make_vllm_config(num_layers: int, num_shared_buffers: int):
+def _make_vllm_config(num_layers: int, num_shared_buffers: int, **extra_config):
     model_config = MagicMock()
     model_config.get_num_layers.return_value = num_layers
     return SimpleNamespace(
@@ -50,6 +55,7 @@ def _make_vllm_config(num_layers: int, num_shared_buffers: int):
                 "backend": "memcache",
                 "use_layerwise": True,
                 "layerwise_num_shared_buffers": num_shared_buffers,
+                **extra_config,
             },
         ),
         model_config=model_config,
@@ -543,7 +549,172 @@ def test_component_sharing_merges_main_across_a_and_b_layers():
     assert indexer_shared_by == [[indexer_by_layer[1]], [indexer_by_layer[4]]]
 
 
-def test_non_attention_cache_spec_is_rejected():
+_GLM5_NEXT_MAIN_PAGE = 64
+_GLM5_NEXT_SMALL_PAGE = 32
+_GLM5_NEXT_MAMBA_PAGE = 64
+
+
+def _make_glm5_next_main_spec() -> AscendMLAAttentionSpec:
+    return AscendMLAAttentionSpec(
+        block_size=8,
+        num_kv_heads=1,
+        head_size=8,
+        dtype=torch.int8,
+        model_version="glm5_next",
+    )
+
+
+def _make_glm5_next_indexer_spec() -> AscendMLAAttentionSpec:
+    # Compressed indexer page: block_size / tokens_per_state physical rows,
+    # padded by the pool planner up to the shared small page size.
+    return AscendMLAAttentionSpec(
+        block_size=8,
+        num_kv_heads=1,
+        head_size=4,
+        dtype=torch.int8,
+        model_version="glm5_next",
+        tokens_per_state=4,
+        page_size_padded=_GLM5_NEXT_SMALL_PAGE,
+    )
+
+
+def _make_glm5_next_tail_spec() -> AscendIndexerKPoolTailSpec:
+    # FP32 [2, ring, head] compressor ring aliasing the indexer small page.
+    return AscendIndexerKPoolTailSpec(
+        block_size=4,
+        sliding_window=4,
+        compress_ratio=4,
+        num_kv_heads=1,
+        head_size=1,
+        dtype=torch.float32,
+        model_version="glm5_next",
+        cache_role="indexer_tail",
+    )
+
+
+def _make_glm5_next_mamba_spec() -> MambaSpec:
+    return MambaSpec(
+        block_size=8,
+        shapes=((16,),),
+        dtypes=(torch.float32,),
+    )
+
+
+def _make_glm5_next_layer_specs(
+    mla_layers: list[str],
+    mamba_layers: list[str] = (),
+) -> dict:
+    main_spec = _make_glm5_next_main_spec()
+    indexer_spec = _make_glm5_next_indexer_spec()
+    tail_spec = _make_glm5_next_tail_spec()
+    specs = {}
+    for layer_name in mla_layers:
+        specs[layer_name] = main_spec
+        specs[f"{layer_name}.indexer.k_cache"] = indexer_spec
+        specs[f"{layer_name}.indexer.tail_cache"] = tail_spec
+    for layer_name in mamba_layers:
+        specs[layer_name] = _make_glm5_next_mamba_spec()
+    return specs
+
+
+def _make_paged_kv_cache_tensor(num_blocks: int, spec, layer_name: str) -> KVCacheTensor:
+    return KVCacheTensor(
+        size=num_blocks * spec.page_size_bytes,
+        layers=[layer_name],
+        layer_stride=num_blocks * spec.page_size_bytes,
+        block_stride=spec.page_size_bytes,
+        offset=0,
+    )
+
+
+def test_glm5_next_components_split_into_main_small_and_private_specs():
+    mla_layers = [f"model.layers.{layer}.self_attn" for layer in range(3)]
+    mamba_layers = ["model.layers.3.mixer", "model.layers.4.mixer"]
+    specs = _make_glm5_next_layer_specs(mla_layers, mamba_layers)
+
+    layout = build_layerwise_reuse_layout(
+        specs,
+        5,
+        {"layerwise_num_shared_buffers": 1, "layerwise_independent_layers": []},
+    )
+
+    layer_specs = layout.layer_cache_specs[0]
+    assert layer_specs.main.layer_name == "model.layers.0.self_attn"
+    assert layer_specs.indexer is not None
+    assert layer_specs.indexer.layer_name == "model.layers.0.self_attn.indexer.k_cache"
+    assert layer_specs.tail is not None
+    assert layer_specs.tail.layer_name == "model.layers.0.self_attn.indexer.tail_cache"
+    # Recurrent (Mamba/KDA) layers own persistent state and never share slots.
+    assert layout.layer_cache_specs[3].shareable is False
+    assert layout.layer_cache_specs[3].main.layer_name == "model.layers.3.mixer"
+    assert layout.buffer_slots == ((3,), (4,), (0, 1, 2))
+    assert layout.independent_layers == [3, 4]
+    assert layout.prefetch_layer_map == {1: 0, 2: 1}
+
+
+def test_glm5_next_apply_merges_main_and_aliases_indexer_tail_page():
+    mla_layers = [f"model.layers.{layer}.self_attn" for layer in range(3)]
+    mamba_layers = ["model.layers.3.mixer", "model.layers.4.mixer"]
+    specs = _make_glm5_next_layer_specs(mla_layers, mamba_layers)
+    num_blocks = 3
+    kv_cache_config = SimpleNamespace(
+        num_blocks=num_blocks,
+        kv_cache_tensors=[_make_paged_kv_cache_tensor(num_blocks, spec, name) for name, spec in specs.items()],
+        kv_cache_groups=[
+            SimpleNamespace(
+                layer_names=list(specs),
+                kv_cache_spec=UniformTypeKVCacheSpecs(block_size=8, kv_cache_specs=specs),
+            )
+        ],
+    )
+
+    apply_layerwise_kv_cache_plan(kv_cache_config, _make_vllm_config(5, 1))
+
+    assert [get_kv_cache_tensor_layers(tensor) for tensor in kv_cache_config.kv_cache_tensors] == [
+        ["model.layers.0.self_attn"],
+        ["model.layers.0.self_attn.indexer.k_cache", "model.layers.0.self_attn.indexer.tail_cache"],
+        ["model.layers.3.mixer"],
+        ["model.layers.4.mixer"],
+        ["model.layers.1.self_attn", "model.layers.2.self_attn"],
+        [
+            "model.layers.1.self_attn.indexer.k_cache",
+            "model.layers.1.self_attn.indexer.tail_cache",
+            "model.layers.2.self_attn.indexer.k_cache",
+            "model.layers.2.self_attn.indexer.tail_cache",
+        ],
+    ]
+    # Every merged descriptor aliases one physical page per block.
+    assert all(tensor.layer_stride == 0 and tensor.offset == 0 for tensor in kv_cache_config.kv_cache_tensors)
+
+
+def test_glm5_next_physical_page_bytes_match_applied_descriptors():
+    mla_layers = [f"model.layers.{layer}.self_attn" for layer in range(3)]
+    mamba_layers = ["model.layers.3.mixer", "model.layers.4.mixer"]
+    specs = _make_glm5_next_layer_specs(mla_layers, mamba_layers)
+    num_blocks = 3
+    extra_config = {"layerwise_num_shared_buffers": 1}
+    reuse_layout = build_layerwise_reuse_layout(specs, 5, extra_config)
+    kv_cache_config = SimpleNamespace(
+        num_blocks=num_blocks,
+        kv_cache_tensors=[_make_paged_kv_cache_tensor(num_blocks, spec, name) for name, spec in specs.items()],
+        kv_cache_groups=[
+            SimpleNamespace(
+                layer_names=list(specs),
+                kv_cache_spec=UniformTypeKVCacheSpecs(block_size=8, kv_cache_specs=specs),
+            )
+        ],
+    )
+
+    physical_page_bytes = layerwise_physical_page_bytes(reuse_layout, specs)
+    apply_layerwise_kv_cache_plan(kv_cache_config, _make_vllm_config(5, 1))
+
+    # Independent layer 0 (main + small) + one shared main/small slot + two
+    # private recurrent pages.
+    assert physical_page_bytes == 2 * (_GLM5_NEXT_MAIN_PAGE + _GLM5_NEXT_SMALL_PAGE) + 2 * _GLM5_NEXT_MAMBA_PAGE
+    assert sum(tensor.size for tensor in kv_cache_config.kv_cache_tensors) == physical_page_bytes * num_blocks
+
+
+def test_non_attention_cache_spec_keeps_private_slots():
     mamba_spec = MambaSpec(
         block_size=2,
         shapes=((1,),),
@@ -551,12 +722,17 @@ def test_non_attention_cache_spec_is_rejected():
     )
     layer_specs = {f"model.layers.{layer}.mixer": mamba_spec for layer in range(3)}
 
-    with pytest.raises(NotImplementedError, match="attention cache specs only"):
-        build_layerwise_reuse_layout(
-            layer_specs,
-            3,
-            {"layerwise_num_shared_buffers": 1},
-        )
+    layout = build_layerwise_reuse_layout(
+        layer_specs,
+        3,
+        {"layerwise_num_shared_buffers": 1},
+    )
+
+    # Recurrent state must survive across forwards, so it cannot be a scratch
+    # slot: no reuse and one physical page per layer.
+    assert layout.has_layer_reuse is False
+    assert layout.buffer_slots == ((0,), (1,), (2,))
+    assert all(not layout.layer_cache_specs[layer].shareable for layer in range(3))
 
 
 def test_packed_cache_tensor_descriptors_are_rejected():

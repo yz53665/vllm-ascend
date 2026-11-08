@@ -8,12 +8,15 @@ from vllm.config import VllmConfig
 from vllm.logger import logger
 from vllm.v1.kv_cache_interface import (
     AttentionSpec,
+    CircularBufferSpec,
     KVCacheConfig,
     KVCacheSpec,
     KVCacheTensor,
+    MambaSpec,
     UniformTypeKVCacheSpecs,
 )
 
+from vllm_ascend.core.kv_cache_interface import AscendIndexerKPoolTailSpec
 from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.backend import (
     get_layerwise_protocol,
 )
@@ -24,6 +27,7 @@ _PREFETCH_LAYERS = "layerwise_prefetch_layers"
 _INDEPENDENT_LAYERS = "layerwise_independent_layers"
 _DEFAULT_MAX_PREFETCH_LAYERS = 8
 _INDEXER_CACHE_SUFFIX = ".indexer.k_cache"
+_TAIL_CACHE_SUFFIX = ".indexer.tail_cache"
 
 
 def get_layerwise_physical_layer_index(layer_name: str, base_layers: int) -> int:
@@ -58,9 +62,26 @@ class NamedKVCacheSpec:
 
 @dataclass(frozen=True)
 class LayerwiseLayerCacheSpecs:
+    """Cache components owned by one physical model layer.
+
+    ``main`` and ``indexer`` form the layerwise scratch pair: both are
+    transferred out right after the layer is computed, so the next layer
+    assigned to the same buffer may overwrite them. ``tail`` is the GLM-Next
+    compressor ring that aliases the compressed indexer page, so it shares
+    that descriptor. ``private_specs`` are recurrent/state caches that must
+    survive across forwards and therefore always keep their own pages.
+    """
+
     main: NamedKVCacheSpec
     indexer: NamedKVCacheSpec | None = None
+    tail: NamedKVCacheSpec | None = None
     extra_main_specs: tuple[NamedKVCacheSpec, ...] = ()
+    private_specs: tuple[NamedKVCacheSpec, ...] = ()
+    shareable: bool = True
+
+    @property
+    def small_specs(self) -> tuple[NamedKVCacheSpec, ...]:
+        return tuple(named for named in (self.indexer, self.tail) if named is not None)
 
 
 @dataclass(frozen=True)
@@ -207,6 +228,76 @@ def get_layerwise_kv_cache_specs(
     return layer_specs
 
 
+def _is_tail_cache_spec(layer_name: str, spec: KVCacheSpec) -> bool:
+    if layer_name.endswith(_TAIL_CACHE_SUFFIX):
+        return True
+    return isinstance(spec, AscendIndexerKPoolTailSpec) and getattr(spec, "cache_role", None) == "indexer_tail"
+
+
+def _is_persistent_state_spec(spec: KVCacheSpec) -> bool:
+    """Whether a spec holds recurrent state that survives across forwards."""
+    return isinstance(spec, (MambaSpec, CircularBufferSpec))
+
+
+def _classify_layer_specs(
+    physical_layer: int,
+    named_specs: list[NamedKVCacheSpec],
+) -> LayerwiseLayerCacheSpecs:
+    if len(named_specs) == 1:
+        # Single-spec layers keep the historical behavior: the only spec is the
+        # main component, but recurrent state still may not join a scratch slot.
+        only_spec = named_specs[0]
+        return LayerwiseLayerCacheSpecs(
+            main=only_spec,
+            shareable=isinstance(only_spec.spec, AttentionSpec),
+        )
+
+    indexer: NamedKVCacheSpec | None = None
+    tail: NamedKVCacheSpec | None = None
+    main_candidates: list[NamedKVCacheSpec] = []
+    private_specs: list[NamedKVCacheSpec] = []
+    for named_spec in named_specs:
+        if named_spec.layer_name.endswith(_INDEXER_CACHE_SUFFIX):
+            indexer = indexer or named_spec
+        elif _is_tail_cache_spec(named_spec.layer_name, named_spec.spec):
+            tail = tail or named_spec
+        elif _is_persistent_state_spec(named_spec.spec):
+            # Recurrent (Mamba/KDA) state stays live across forwards, so it can
+            # never be a layerwise scratch slot.
+            private_specs.append(named_spec)
+        else:
+            main_candidates.append(named_spec)
+
+    if not main_candidates:
+        if not private_specs:
+            raise ValueError(
+                f"Physical layer {physical_layer} has no main cache spec; "
+                f"got {[named_spec.layer_name for named_spec in named_specs]}."
+            )
+        # Recurrent-only layer: every component keeps private pages.
+        return LayerwiseLayerCacheSpecs(
+            main=private_specs[0],
+            private_specs=tuple(private_specs[1:]),
+            shareable=False,
+        )
+
+    # Prefer the '.attn' component of multi-spec layers; otherwise the main
+    # cache is the shortest name (GLM-Next registers the MLA cache under the
+    # attention prefix itself, e.g. '.self_attn').
+    main_spec = next(
+        (named_spec for named_spec in main_candidates if named_spec.layer_name.endswith(".attn")),
+        min(main_candidates, key=lambda named_spec: len(named_spec.layer_name)),
+    )
+    extra_specs = tuple(named_spec for named_spec in main_candidates if named_spec is not main_spec)
+    return LayerwiseLayerCacheSpecs(
+        main=main_spec,
+        indexer=indexer,
+        tail=tail,
+        extra_main_specs=extra_specs,
+        private_specs=tuple(private_specs),
+    )
+
+
 def build_layerwise_reuse_layout(
     layer_specs: dict[str, KVCacheSpec],
     base_layers: int,
@@ -225,34 +316,17 @@ def build_layerwise_reuse_layout(
 
     layer_cache_specs: dict[int, LayerwiseLayerCacheSpecs] = {}
     for physical_layer, named_specs in named_specs_by_layer.items():
-        if len(named_specs) == 1:
-            layer_cache_specs[physical_layer] = LayerwiseLayerCacheSpecs(main=named_specs[0])
-            continue
+        layer_cache_specs[physical_layer] = _classify_layer_specs(physical_layer, named_specs)
 
-        indexer_specs = [spec for spec in named_specs if spec.layer_name.endswith(_INDEXER_CACHE_SUFFIX)]
-        main_specs = [spec for spec in named_specs if not spec.layer_name.endswith(_INDEXER_CACHE_SUFFIX)]
-        if len(main_specs) < 1:
-            raise ValueError(
-                f"Physical layer {physical_layer} has no main cache spec; "
-                f"got {[spec.layer_name for spec in named_specs]}."
-            )
-        # Select '.attn' as main spec, rest as extra
-        main_spec = next((s for s in main_specs if s.layer_name.endswith(".attn")), main_specs[0])
-        extra_specs = tuple(s for s in main_specs if s is not main_spec)
-        indexer_spec = indexer_specs[0] if indexer_specs else None
-        layer_cache_specs[physical_layer] = LayerwiseLayerCacheSpecs(
-            main=main_spec,
-            indexer=indexer_spec,
-            extra_main_specs=extra_specs,
-        )
-
-    signature_buckets: list[tuple[KVCacheSpec, list[int]]] = []
+    signature_buckets: list[tuple[Any, list[int]]] = []
     for physical_layer in physical_layers:
-        if physical_layer in independent_layer_set:
+        specs = layer_cache_specs[physical_layer]
+        if physical_layer in independent_layer_set or not specs.shareable:
             continue
         # TODO(lf): Plan shared buffers independently for every cache spec.
-        # Slots are grouped by main spec. Indexer specs are validated separately.
-        signature = layer_cache_specs[physical_layer].main.spec
+        # Slots are grouped by main spec; small-page specs are validated when
+        # the descriptors are built.
+        signature = specs.main.spec
         for bucket_signature, bucket_layers in signature_buckets:
             if signature == bucket_signature:
                 bucket_layers.append(physical_layer)
@@ -261,6 +335,13 @@ def build_layerwise_reuse_layout(
             signature_buckets.append((signature, [physical_layer]))
 
     buffer_slots: list[tuple[int, ...]] = [(layer,) for layer in independent_layers]
+    for physical_layer in physical_layers:
+        if physical_layer in independent_layer_set or layer_cache_specs[physical_layer].shareable:
+            continue
+        # Persistent recurrent layers occupy their own slot and never join the
+        # prefetch/reuse chain.
+        buffer_slots.append((physical_layer,))
+        independent_layers.append(physical_layer)
     prefetch_layer_map: dict[int, int] = {}
     for _, bucket_layers in signature_buckets:
         num_shared_buffers = min(base_layout.num_shared_buffers, len(bucket_layers))
@@ -270,25 +351,11 @@ def build_layerwise_reuse_layout(
             for owner_index in range(1, len(layers_sharing_buffer)):
                 prefetch_layer_map[layers_sharing_buffer[owner_index]] = layers_sharing_buffer[owner_index - 1]
 
-    if prefetch_layer_map:
-        unsupported_specs = [
-            named_spec
-            for named_specs in named_specs_by_layer.values()
-            for named_spec in named_specs
-            if not isinstance(named_spec.spec, AttentionSpec)
-        ]
-        if unsupported_specs:
-            named_spec = unsupported_specs[0]
-            raise NotImplementedError(
-                "Layerwise KV cache reuse supports attention cache specs only; "
-                f"{named_spec.layer_name} uses {type(named_spec.spec).__name__}."
-            )
-
     return LayerwiseReuseLayout(
         layer_cache_specs=layer_cache_specs,
         buffer_slots=tuple(buffer_slots),
         prefetch_layer_map=prefetch_layer_map,
-        independent_layers=independent_layers,
+        independent_layers=sorted(independent_layers),
         num_prefetch_layers=base_layout.num_prefetch_layers,
         has_layer_reuse=bool(prefetch_layer_map),
     )
@@ -360,26 +427,50 @@ def apply_layerwise_kv_cache_plan(
             raise ValueError(
                 "Layers sharing layerwise KV buffers must have identical cache specs for every named cache spec."
             )
-        new_tensors.append(
-            KVCacheTensor(
-                layers=shared_by,
-                size=kv_cache_config.num_blocks * reference_spec.page_size_bytes,
-                layer_stride=0,
-                block_stride=reference_spec.page_size_bytes,
-                offset=0,
+        new_tensors.append(_alias_tensor(shared_by, reference_spec.page_size_bytes))
+
+    def _merge_small_specs(named_specs: list[NamedKVCacheSpec]) -> None:
+        """Alias the compressed indexer page and its compressor ring.
+
+        GLM-Next registers the compressed indexer and the compressor tail as
+        two specs of one small page, so both share a descriptor. Any number of
+        layers assigned to the same slot may join that descriptor.
+        """
+        shared_by = [named_spec.layer_name for named_spec in named_specs]
+        page_sizes = {layer_specs[layer_name].page_size_bytes for layer_name in shared_by}
+        if len(page_sizes) != 1:
+            raise ValueError(
+                "Layers sharing layerwise small-page KV buffers must have identical page sizes; "
+                f"got {sorted(page_sizes)} for {shared_by}."
             )
-        )
+        new_tensors.append(_alias_tensor(shared_by, page_sizes.pop()))
 
     new_tensors: list[KVCacheTensor] = []
+
+    def _alias_tensor(shared_by: list[str], page_size: int) -> KVCacheTensor:
+        return KVCacheTensor(
+            layers=shared_by,
+            size=kv_cache_config.num_blocks * page_size,
+            layer_stride=0,
+            block_stride=page_size,
+            offset=0,
+        )
+
     for slot in reuse_layout.buffer_slots:
-        _merge_specs([reuse_layout.layer_cache_specs[layer].main for layer in slot])
-        indexer_specs: list[NamedKVCacheSpec] = []
-        for layer in slot:
-            indexer = reuse_layout.layer_cache_specs[layer].indexer
-            if indexer is not None:
-                indexer_specs.append(indexer)
-        if indexer_specs:
-            _merge_specs(indexer_specs)
+        slot_specs = [reuse_layout.layer_cache_specs[layer] for layer in slot]
+        if len(slot_specs) == 1 and not slot_specs[0].shareable:
+            # Persistent recurrent layers keep one descriptor per component.
+            for named_spec in (slot_specs[0].main, *slot_specs[0].private_specs):
+                _merge_specs([named_spec])
+            continue
+        _merge_specs([slot_spec.main for slot_spec in slot_specs])
+        small_specs = [named_spec for slot_spec in slot_specs for named_spec in slot_spec.small_specs]
+        if small_specs:
+            _merge_small_specs(small_specs)
+        for slot_spec in slot_specs:
+            if slot_spec.private_specs:
+                for named_spec in slot_spec.private_specs:
+                    _merge_specs([named_spec])
     # Draft KV survives between forwards, unlike a layerwise target scratch
     # slot. Give every resident draft layer its own persistent descriptor.
     for layer_name in layer_specs:
@@ -392,3 +483,38 @@ def apply_layerwise_kv_cache_plan(
         len(new_tensors),
         len(reuse_layout.buffer_slots),
     )
+
+
+def layerwise_physical_page_bytes(
+    reuse_layout: LayerwiseReuseLayout,
+    kv_cache_spec: dict[str, KVCacheSpec],
+    excluded_layer_names: set[str] | None = None,
+) -> int:
+    """Return the physical bytes one block occupies after ``apply`` rewrites it.
+
+    The value must mirror the descriptor set built by
+    :func:`apply_layerwise_kv_cache_plan`, because the worker divides the
+    device KV budget by the ratio of the unshared planner layout to this
+    physical layout.
+    """
+    physical_page_bytes = 0
+    for slot in reuse_layout.buffer_slots:
+        slot_specs = [reuse_layout.layer_cache_specs[layer] for layer in slot]
+        if len(slot_specs) == 1 and not slot_specs[0].shareable:
+            physical_page_bytes += sum(
+                kv_cache_spec[named_spec.layer_name].page_size_bytes
+                for named_spec in (slot_specs[0].main, *slot_specs[0].private_specs)
+            )
+            continue
+        physical_page_bytes += kv_cache_spec[slot_specs[0].main.layer_name].page_size_bytes
+        small_specs = [named_spec for slot_spec in slot_specs for named_spec in slot_spec.small_specs]
+        if small_specs:
+            physical_page_bytes += kv_cache_spec[small_specs[0].layer_name].page_size_bytes
+        physical_page_bytes += sum(
+            kv_cache_spec[named_spec.layer_name].page_size_bytes
+            for slot_spec in slot_specs
+            for named_spec in slot_spec.private_specs
+        )
+    for layer_name in (excluded_layer_names or set()) & kv_cache_spec.keys():
+        physical_page_bytes += kv_cache_spec[layer_name].page_size_bytes
+    return physical_page_bytes
