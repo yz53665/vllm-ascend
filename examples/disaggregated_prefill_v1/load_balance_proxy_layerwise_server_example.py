@@ -98,7 +98,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from vllm.logger import init_logger
 
 from vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.protocol import (
@@ -121,11 +121,13 @@ class ServerState:
         self.host = host
         self.port = port
         self.url = f"http://{host}:{port}/v1"
+        self.metrics_url = f"http://{host}:{port}/metrics"
         # Auto-completion for ipv6
         try:
             ip = ipaddress.ip_address(self.host)
             if isinstance(ip, ipaddress.IPv6Address):
                 self.url = f"http://[{host}]:{port}/v1"
+                self.metrics_url = f"http://[{host}]:{port}/metrics"
         except Exception:
             pass
         self.client = httpx.AsyncClient(
@@ -636,6 +638,70 @@ async def handle_completions(request: Request):
 @with_cancellation
 async def handle_chat_completions(request: Request):
     return await _handle_completions("/chat/completions", request)
+
+
+def _add_prometheus_labels(line: str, labels: str) -> str:
+    """Inject extra labels into a single Prometheus text exposition line."""
+    if not line or line.startswith("#"):
+        return line
+    brace_idx = line.find("{")
+    space_idx = line.find(" ")
+    if brace_idx != -1 and (space_idx == -1 or brace_idx < space_idx):
+        return f"{line[: brace_idx + 1]}{labels},{line[brace_idx + 1 :]}"
+    if space_idx == -1:
+        return line
+    return f"{line[:space_idx]}{{{labels}}}{line[space_idx:]}"
+
+
+def _merge_prometheus_texts(scraped: list[tuple[str, str]]) -> str:
+    """Merge metrics scraped from all backends, tagging each series with its role
+    and instance.
+
+    Prometheus rejects duplicated metric metadata and series without distinct
+    labels, so HELP/TYPE lines are kept only once per metric and every sample
+    gets ``proxy_role``/``proxy_instance`` labels.
+    """
+    seen_metadata: set[tuple[str, str]] = set()
+    merged_lines = []
+    for labels, text in scraped:
+        for line in text.splitlines():
+            if not line:
+                continue
+            if line.startswith("# "):
+                parts = line.split(maxsplit=2)
+                if len(parts) == 3 and parts[1] in ("HELP", "TYPE"):
+                    metric_name = parts[2].split(maxsplit=1)[0]
+                    metadata_key = (parts[1], metric_name)
+                    if metadata_key in seen_metadata:
+                        continue
+                    seen_metadata.add(metadata_key)
+                merged_lines.append(line)
+                continue
+            merged_lines.append(_add_prometheus_labels(line, labels))
+    return "\n".join(merged_lines) + "\n"
+
+
+@app.get("/metrics")
+async def metrics():
+    async def scrape(role: str, server: ServerState) -> tuple[str, str]:
+        labels = f'proxy_role="{role}",proxy_instance="{server.host}:{server.port}"'
+        try:
+            response = await server.client.get(server.metrics_url, timeout=5.0)
+            response.raise_for_status()
+            return labels, response.text
+        except Exception as e:
+            logger.warning("Failed to scrape metrics from %s: %s", server.metrics_url, e)
+            return labels, ""
+
+    if proxy_state is None:
+        raise HTTPException(status_code=503, detail="Proxy state not initialized")
+    results = await asyncio.gather(
+        *[scrape("prefill", server) for server in proxy_state.prefillers],
+        *[scrape("decode", server) for server in proxy_state.decoders],
+    )
+    if not any(text for _, text in results):
+        raise HTTPException(status_code=503, detail="No backend metrics available")
+    return PlainTextResponse(_merge_prometheus_texts(results), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/healthcheck")
